@@ -69,9 +69,9 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
   async function encode(v, src, opt = {}) {
     const out = store.paths.media(v.id), low = store.paths.mediaLow(v.id);
     const info = probe(config.ffprobe, src), wantLow = Math.min(info.width, info.height) > 400;
-    const ranges = opt.ranges && opt.ranges.length ? opt.ranges : null, boxes = opt.boxes && opt.boxes.length && info.width ? opt.boxes : null, clean = opt.clean && info.audio;
+    const ranges = opt.ranges && opt.ranges.length ? opt.ranges : null, boxes = opt.boxes && opt.boxes.length && info.width ? opt.boxes : null, clean = opt.clean && info.audio, mark = opt.mark && info.width ? opt.mark : null;
     let args = ['-y', '-i', src, ...outArgs(720, 26, '96k'), out, ...(wantLow ? [...outArgs(360, 30, '64k'), low] : [])];
-    if (ranges || boxes || clean) {
+    if (ranges || boxes || clean || mark) {
       const f = []; let vl = '0:v', al = info.audio ? '0:a' : null;
       if (ranges) {
         ranges.forEach(([s, e], i) => { f.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[v${i}]`); if (al) f.push(`[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS[a${i}]`); });
@@ -84,11 +84,15 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
         f.push(`[${vl}]split[bb${i}][bm${i}]`, `[bm${i}]crop=${w}:${h}:${x}:${y},scale=${Math.max(2, Math.round(w / 24))}:${Math.max(2, Math.round(h / 24))},scale=${w}:${h}:flags=neighbor[bc${i}]`,
           `[bb${i}][bc${i}]overlay=${x}:${y}:enable='between(t,${b.s},${b.e})'[bo${i}]`); vl = `bo${i}`;
       });
+      if (mark) {   // 로고(또는 글자 그림)를 화면 너비의 16% 크기로 구석에 얹는다
+        const lw = Math.max(16, Math.round(info.width * 0.16 / 2) * 2), mg = Math.round(info.width * 0.02), x = /r$/.test(mark.pos) ? `main_w-overlay_w-${mg}` : mg, y = /^b/.test(mark.pos) ? `main_h-overlay_h-${mg}` : mg;
+        f.push(`[1:v]scale=${lw}:-1,format=rgba,colorchannelmixer=aa=${mark.opacity}[wm]`, `[${vl}][wm]overlay=${x}:${y}[vw]`); vl = 'vw';
+      }
       if (clean) { f.push(`[${al}]${AUDIO_FIX}[af]`); al = 'af'; }
       const am = (label) => (al ? ['-map', al === '0:a' ? '0:a' : `[${label}]`] : []);
       if (wantLow) { f.push(`[${vl}]split=2[vh][vq]`, `[vh]${scaleTo(720)}[vo]`, `[vq]${scaleTo(360)}[vlo]`); if (al && al !== '0:a') f.push(`[${al}]asplit=2[ao][alo]`); }
       else { f.push(`[${vl}]${scaleTo(720)}[vo]`); if (al && al !== '0:a') f.push(`[${al}]anull[ao]`); }
-      args = ['-y', '-i', src, '-filter_complex', f.join(';'), '-map', '[vo]', ...am('ao'), ...codec(26, '96k'), out, ...(wantLow ? ['-map', '[vlo]', ...am('alo'), ...codec(30, '64k'), low] : [])];
+      args = ['-y', '-i', src, ...(mark ? ['-i', mark.file] : []), '-filter_complex', f.join(';'), '-map', '[vo]', ...am('ao'), ...codec(26, '96k'), out, ...(wantLow ? ['-map', '[vlo]', ...am('alo'), ...codec(30, '64k'), low] : [])];
     }
     const r = await run(config.ffmpeg, args);
     if (r.code !== 0 || !fs.existsSync(out)) {
@@ -107,13 +111,30 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
       delete v.incoming; return;
     }
     const keep = v.keep ? cleanRanges(v.keep, probe(config.ffprobe, src).duration || Infinity) : null;   // 올릴 때 고른 "남길 구간"
-    const r = await encode(v, src, { ranges: keep, clean: !!v.cleanAudio });
-    delete v.keep; delete v.cleanAudio;
+    const mark = markOf();   // 로고 넣기가 켜져 있으면 새 영상에 자동으로 얹는다
+    const r = await encode(v, src, { ranges: keep, clean: !!v.cleanAudio, mark });
+    delete v.keep; delete v.cleanAudio; if (mark && r.ok) v.marked = mark.ver;
     if (!r.ok) { Object.assign(v, { status: 'failed', note: '영상을 변환하지 못했어요: ' + r.err }); return; }
     const thumb = await makeThumb(v.id, Math.min(3, r.duration * 0.1));
     Object.assign(v, { status: 'ready', duration: r.duration, bytes: r.bytes, low: r.low, thumb, thumbVer: Date.now(), note: '' });
     delete v.incoming;
     try { fs.unlinkSync(src); } catch { }
+  }
+
+  const markOf = () => { const w = store.db.watermark; return w && w.on && fs.existsSync(store.paths.watermark()) ? { file: store.paths.watermark(), pos: w.pos || 'br', opacity: w.opacity || 0.85, ver: w.ver || 1 } : null; };
+
+  // 영상 여러 개를 이어 붙여 한 편으로 만든다. 크기는 첫 영상에 맞추고(남는 곳은 검게), 소리가 없는 영상에는 조용한 소리를 넣는다.
+  async function merge(v, files) {
+    const infos = files.map((f) => probe(config.ffprobe, f)), W = Math.max(2, Math.round(infos[0].width / 2) * 2), H = Math.max(2, Math.round(infos[0].height / 2) * 2), tmp = store.paths.incoming(v.id, '_merge.mp4');
+    const inputs = [], f = []; let extra = files.length;
+    files.forEach((file) => inputs.push('-i', file));
+    files.forEach((_, i) => { f.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${i}]`);
+      let a = `${i}:a`; if (!infos[i].audio) { inputs.push('-f', 'lavfi', '-t', String(Math.max(0.1, infos[i].duration)), '-i', 'anullsrc=r=48000:cl=stereo'); a = `${extra++}:a`; }
+      f.push(`[${a}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`); });
+    f.push(files.map((_, i) => `[v${i}][a${i}]`).join('') + `concat=n=${files.length}:v=1:a=1[vo][ao]`);
+    const r = await run(config.ffmpeg, ['-y', ...inputs, '-filter_complex', f.join(';'), '-map', '[vo]', '-map', '[ao]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', tmp]);
+    if (r.code !== 0 || !fs.existsSync(tmp)) { try { fs.unlinkSync(tmp); } catch { } Object.assign(v, { status: 'failed', note: '영상을 합치지 못했어요: ' + (r.err.split('\n').filter(Boolean).pop() || '') }); return; }
+    v.incoming = tmp; await ingest(v, tmp);
   }
 
   // 저장된 영상을 다시 만든다(구간 남기기, 가리기). 실패하면 원래 영상으로 되돌린다.
@@ -147,7 +168,10 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
       const job = queue.shift();
       const v = store.video(job.id);
       if (!v) { if (job.src) try { fs.unlinkSync(job.src); } catch { } continue; }
-      try { if (job.type === 'trim') await trim(v, { ranges: job.ranges }); else if (job.type === 'blur') await trim(v, { boxes: job.boxes }); else if (job.type === 'audio') await fixAudio(v); else await ingest(v, job.src); }
+      try { if (job.type === 'trim') await trim(v, { ranges: job.ranges }); else if (job.type === 'blur') await trim(v, { boxes: job.boxes }); else if (job.type === 'audio') await fixAudio(v);
+        else if (job.type === 'mark') { const mk = markOf(); if (mk) { await trim(v, { mark: mk }); if (!v.note) v.marked = mk.ver; } else v.status = 'ready'; }
+        else if (job.type === 'merge') { await merge(v, job.files); if (v.status === 'ready' && job.done) job.done(); }
+        else await ingest(v, job.src); }
       catch (e) { Object.assign(v, { status: v.status === 'processing' && fs.existsSync(store.paths.media(v.id)) ? 'ready' : 'failed', note: String(e.message) }); }
       store.save();
       if (v.status === 'ready') try { onDone(v, job.type); } catch (e) { log('[순수TV] ' + e.message); }
@@ -162,6 +186,8 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
     enqueueCut(id, ranges) { queue.push({ type: 'trim', id, ranges }); pump(); },
     enqueueBlur(id, boxes) { queue.push({ type: 'blur', id, boxes }); pump(); },
     enqueueAudio(id) { queue.push({ type: 'audio', id }); pump(); },
+    enqueueMark(id) { queue.push({ type: 'mark', id }); pump(); },
+    enqueueMerge(id, files, done) { queue.push({ type: 'merge', id, files, done }); pump(); },
     idle: () => !busy && queue.length === 0
   };
 }

@@ -7,7 +7,7 @@ const dur = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m =
 const ago = (iso) => { const d = (Date.now() - new Date(iso)) / 1000; if (d < 60) return '방금'; if (d < 3600) return Math.floor(d / 60) + '분 전'; if (d < 86400) return Math.floor(d / 3600) + '시간 전'; if (d < 86400 * 30) return Math.floor(d / 86400) + '일 전'; return new Date(iso).toLocaleDateString('ko-KR'); };
 const gb = (b) => (b / 1024 ** 3).toFixed(b > 10 * 1024 ** 3 ? 0 : 1) + ' GB', mb = (b) => b > 1024 ** 3 ? gb(b) : (b / 1024 ** 2).toFixed(0) + ' MB';
 const ls = { get: (k, d) => { try { const v = localStorage.getItem('sunsutv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('sunsutv.' + k, JSON.stringify(v)); } catch { } } };
-let meta = { categories: [] }, state = { q: '', cat: '', sort: 'new', all: false }, poll = null, keyHandler = null, nextTimer = null, leaveFns = [];
+let meta = { categories: [], watermark: { on: false, has: false, pos: 'br', opacity: 0.85, ver: 0 } }, state = { q: '', cat: '', sort: 'new', all: false }, poll = null, keyHandler = null, nextTimer = null, leaveFns = [];
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 2200); }
 const thumbUrl = (v) => (v.link && v.link.type === 'youtube' ? `https://i.ytimg.com/vi/${v.link.id}/hqdefault.jpg` : `thumb/${v.id}.jpg?v=${v.thumbVer || 0}`);
 
@@ -378,7 +378,9 @@ function comments(list) {
     <div class="ops"><button class="small ${liked[c.id] ? 'on' : ''}" data-clike="${c.id}">👍 ${c.likes || 0}</button>${reply ? '' : `<button class="small ghost" data-reply="${c.id}">답글</button>`}<button class="small ghost" data-cdel="${c.id}">삭제</button></div></div>`;
   return list.filter((c) => !c.parent).reverse().map((c) => one(c) + list.filter((r) => r.parent === c.id).map((r) => one(r, true)).join('')).join('');
 }
+let watchedPct = null;
 async function watch(id, params) {
+  watchedPct = null;
   let d; try { d = await api('api/videos/' + id); } catch (e) { $('#view').innerHTML = `<div class="empty"><b>${esc(e.message)}</b><a href="#/">처음으로</a></div>`; return; }
   const v = d.video, listId = params.get('list'); let pl = null;
   if (listId) try { pl = (await api('api/playlists/' + listId)).playlist; } catch { }
@@ -403,13 +405,15 @@ async function watch(id, params) {
     <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.kind === 'link' ? ' · 링크 영상' : ''}${isLive ? ' · 🔴 방송 중' : v.wasLive ? ' · 라이브 다시 보기' : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
     <div class="actions"><button id="like" class="${liked === 1 ? 'on' : ''}">👍 <b id="likes">${v.likes}</b></button><button id="dislike" class="${liked === -1 ? 'on' : ''}">👎 <b id="dislikes">${v.dislikes}</b></button>
       <button id="share">↗ 공유</button><button id="later" class="${later ? 'on' : ''}">⏰ ${later ? '담김' : '나중에 보기'}</button><button id="addPl">📚 재생 목록에 담기</button><span class="sp"></span>
-      <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">✂ 편집</button><button id="blurBtn" class="ghost">▦ 가리기</button><button id="audioBtn" class="ghost">🔊 소리 정리</button><a id="dlBtn" class="btn ghost" title="통신이 안 되는 곳에 가기 전에 받아 두세요">⬇ 내려받기</a><button id="statBtn" class="ghost">📊 시청 그래프</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
+      <button id="capBtn" class="ghost" title="지금 장면을 사진으로 저장">📷 장면 캡처</button><a id="dlBtn" class="btn ghost" title="통신이 안 되는 곳에 가기 전에 받아 두세요">⬇ 내려받기</a><button id="edit" class="ghost">고치기</button><button id="trimBtn" class="ghost">✂ 편집</button>
+      <details class="more" id="tools"><summary>도구 ▾</summary><div class="menu"><button id="thumbBtn">🖼 썸네일</button><button id="blurBtn">▦ 가리기</button><button id="audioBtn">🔊 소리 정리</button><button id="mergeBtn">➕ 영상 합치기</button><button id="markBtn">🏷 로고 넣기</button>
+        <button id="attBtn">✋ 출석 ${v.attend ? `명단 (${v.attendCount})` : '받기'}</button><button id="statBtn">📊 시청 그래프</button><hr><button id="report">🚩 신고</button><button id="del">🗑 지우기</button></div></details></div>
     ${v.note && v.status === 'ready' ? `<p class="msg bad">${esc(v.note)}</p>` : ''}
     ${v.desc || v.tags.length ? `<div class="desc">${esc(v.desc)}${v.tags.length ? (v.desc ? '\n' : '') + v.tags.map((t) => `<a class="tag" href="#/tag/${encodeURIComponent(t)}">#${esc(t)}</a>`).join('') : ''}</div>` : ''}
     <div class="comments"><h2>댓글 ${d.comments.length}개</h2>
       <form class="cform" id="cform"><input id="ctext" maxlength="1000" placeholder="댓글 추가"><label class="meta" style="white-space:nowrap"><input type="checkbox" id="cat"> 지금 장면에</label><button class="primary">등록</button></form>
       <div id="clist">${comments(d.comments)}</div></div>
-    </section><aside class="side"><div id="core" class="corebox"></div><div id="chat" class="chatbox"></div>${plBox}<h2>관련 영상</h2>${d.related.map((x) => card(x)).join('') || '<div class="meta">아직 없어요</div>'}</aside></div>`;
+    </section><aside class="side"><div id="core" class="corebox"></div><div id="att" class="chatbox attbox" hidden></div><div id="chat" class="chatbox"></div>${plBox}<h2>관련 영상</h2>${d.related.map((x) => card(x)).join('') || '<div class="meta">아직 없어요</div>'}</aside></div>`;
   const P = $('#player');
   if (P) {
     // 시청 기록, 이어 보기, 공유 링크의 시작 시간
@@ -424,7 +428,7 @@ async function watch(id, params) {
     P.addEventListener('seeking', () => clearTimeout(nextTimer));   // 끝난 뒤 되감으면 넘어가지 않는다
     P.addEventListener('timeupdate', () => { coreTick(); mark(); if (!P.paused && P.duration) { const b = Math.min(39, Math.floor(P.currentTime / P.duration * 40)); if (!seen.has(b)) { seen.add(b); pend.push(b); } } });
     // 시청 그래프용: 영상을 40칸으로 나눠 실제로 재생한 칸을 가끔 서버에 알린다(누가 봤는지는 남기지 않는다)
-    const seen = new Set(), pend = []; let sentAny = false;
+    const seen = new Set(), pend = []; let sentAny = false; watchedPct = () => Math.round(seen.size / 40 * 100);
     const flush = (leaving) => { if (!pend.length) return; const body = JSON.stringify({ buckets: pend.splice(0), first: !sentAny }); sentAny = true;
       if (leaving && navigator.sendBeacon) navigator.sendBeacon(`api/videos/${id}/watch`, new Blob([body], { type: 'application/json' })); else fetch(`api/videos/${id}/watch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => { }); };
     const wt = setInterval(() => flush(false), 15000), onHide = () => flush(true); window.addEventListener('pagehide', onHide);
@@ -571,6 +575,42 @@ async function watch(id, params) {
     try { await api(`api/videos/${id}/audio`, send('POST')); route(); } catch (e) { alert(e.message); } };
   if (P) { $('#dlBtn').href = src(quality) + (src(quality).includes('?') ? '&' : '?') + 'download=1'; $('#dlBtn').download = v.title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 80) + '.mp4'; } else $('#dlBtn').hidden = true;
   if (link) $('#statBtn').hidden = true;
+  $$('#tools .menu button').forEach((b) => b.addEventListener('click', () => { $('#tools').open = false; }));   // 메뉴에서 고르면 닫는다
+  document.addEventListener('click', (e) => { const t = $('#tools'); if (t && t.open && !t.contains(e.target)) t.open = false; }, { capture: true });
+  /* 장면 캡처: 지금 보는 장면을 사진(PNG)으로 저장한다. 될 때는 복사도 해 둔다(붙여 넣기용) */
+  if (!P) { $('#capBtn').hidden = true; $('#mergeBtn').hidden = true; $('#markBtn').hidden = true; }
+  $('#capBtn').onclick = () => { const c = document.createElement('canvas'); c.width = P.videoWidth; c.height = P.videoHeight; if (!c.width) return toast('영상이 준비된 뒤에 눌러 주세요');
+    c.getContext('2d').drawImage(P, 0, 0); const t = Math.floor(P.currentTime), name = `${v.title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 60)} ${Math.floor(t / 60)}분${String(t % 60).padStart(2, '0')}초.png`;
+    c.toBlob(async (blob) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      let copied = false; try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); copied = true; } catch { } toast(copied ? '장면을 저장하고 복사했어요 (붙여 넣기 가능)' : '장면을 사진으로 저장했어요'); }, 'image/png'); };
+  /* 로고 넣기 */
+  if (!meta.watermark || !meta.watermark.on || v.marked) $('#markBtn').hidden = true;
+  $('#markBtn').onclick = async () => { if (!confirm('관리 화면에서 정한 로고를 이 영상에 넣어요. 되돌릴 수 없어요. 계속할까요?')) return; try { await api(`api/videos/${id}/mark`, send('POST')); route(); } catch (e) { alert(e.message); } };
+  /* 영상 합치기: 이 영상 뒤에 다른 영상을 순서대로 이어 붙여 새 영상을 만든다 */
+  $('#mergeBtn').onclick = async () => { P.pause(); const { videos } = await api('api/videos?all=1'), others = videos.filter((x) => x.id !== v.id && x.status === 'ready' && x.kind === 'file'), picked = [];
+    const dg = dialog(`<h2>➕ 영상 합치기</h2><p class="meta">이 영상 뒤에 이어 붙일 영상을 순서대로 누르세요(5개까지). 합친 영상이 새로 만들어져요.</p>
+      <div class="mglist"><div class="mgrow on"><b>1</b><span>${esc(v.title)}</span><em>${dur(v.duration)}</em></div>${others.map((x) => `<button class="mgrow" data-id="${x.id}"><b></b><span>${esc(x.title)}</span><em>${dur(x.duration)}</em></button>`).join('') || '<p class="meta">합칠 수 있는 다른 영상이 없어요.</p>'}</div>
+      <label>합친 영상 제목 <input id="mgTitle" maxlength="100" value="${esc(v.title)}"></label><label class="pick"><input type="checkbox" id="mgRemove"> 합친 뒤 원래 영상들은 지우기 (디스크 절약)</label><p id="mgMsg" class="msg"></p>
+      <div class="row"><button data-close class="ghost">취소</button><button id="mgGo" class="primary" disabled>합치기</button></div>`);
+    const draw = () => { $$('.mgrow[data-id]', dg).forEach((b) => { const k = picked.indexOf(b.dataset.id); b.classList.toggle('on', k >= 0); $('b', b).textContent = k >= 0 ? k + 2 : ''; });
+      $('#mgGo', dg).disabled = !picked.length; $('#mgMsg', dg).textContent = picked.length ? `${picked.length + 1}개를 합치면 약 ${dur(v.duration + picked.reduce((n, pid) => n + others.find((x) => x.id === pid).duration, 0))} 길이가 돼요.` : ''; };
+    $$('.mgrow[data-id]', dg).forEach((b) => b.onclick = () => { const k = picked.indexOf(b.dataset.id); if (k >= 0) picked.splice(k, 1); else if (picked.length < 5) picked.push(b.dataset.id); draw(); });
+    $('#mgGo', dg).onclick = async () => { const rm = $('#mgRemove', dg).checked; if (rm && !confirm('합친 뒤 원래 영상들을 지워요. 되돌릴 수 없어요. 계속할까요?')) return;
+      try { const r = await api('api/merge', send('POST', { ids: [v.id, ...picked], title: $('#mgTitle', dg).value, remove: rm })); dg.close(); toast('영상을 합치고 있어요'); location.hash = '#/v/' + r.video.id; } catch (e) { $('#mgMsg', dg).className = 'msg bad'; $('#mgMsg', dg).textContent = e.message; } }; };
+  /* 출석: 올린 사람이 켜면, 보는 사람이 이름과 소속을 적고 출석을 누른다. 명단은 엑셀용 표로 받는다 */
+  $('#attBtn').onclick = async () => { if (!v.attend) { if (!confirm('이 영상에서 출석을 받을까요? 보는 사람에게 "출석" 칸이 보여요.')) return; await api('api/videos/' + id, send('PATCH', { attend: true })); toast('출석 받기를 켰어요'); return route(); }
+    const { attendance: list } = await api(`api/videos/${id}/attendance`);
+    const dg = dialog(`<h2>✋ 출석 명단 ${list.length}명</h2>${list.length ? `<div class="atttable"><table class="adm"><thead><tr><th>번호</th><th>이름</th><th>소속</th><th>출석 시각</th><th>본 비율</th></tr></thead><tbody>${list.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.dept)}</td><td>${new Date(x.at).toLocaleString('ko-KR')}</td><td>${x.seen == null ? '' : x.seen + '%'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="meta">아직 출석한 사람이 없어요.</p>'}
+      <div class="row" style="margin-top:12px"><button id="atOff" class="small">출석 받기 끄기</button><button id="atClear" class="small">명단 비우기</button><span class="sp"></span><a class="btn" href="api/videos/${id}/attendance?csv=1" download>⬇ 엑셀용 파일 받기</a><button data-close class="primary">닫기</button></div>`);
+    $('#atOff', dg).onclick = async () => { await api('api/videos/' + id, send('PATCH', { attend: false })); dg.close(); toast('출석 받기를 껐어요'); route(); };
+    $('#atClear', dg).onclick = async () => { if (!confirm('출석 명단을 모두 지울까요?')) return; await api(`api/videos/${id}/attendance`, { method: 'DELETE' }); dg.close(); route(); }; };
+  if (v.attend) { const box = $('#att'), done = ls.get('attended', {})[v.id]; box.hidden = false;
+    const render = (ok, n) => { box.innerHTML = `<header><b>✋ 출석 체크</b><span class="meta">${n != null ? `${n}명 출석` : ''}</span></header>` + (ok ? `<p class="attok">✓ ${esc(ok)} 님, 출석했어요.</p>`
+        : `<form id="atForm" class="attform"><input id="atName" maxlength="20" placeholder="이름" value="${esc(ls.get('nick', ''))}"><input id="atDept" maxlength="30" placeholder="소속 (부서)" value="${esc(ls.get('dept', ''))}"><button class="primary">출석</button></form><p id="atMsg" class="msg bad"></p>`);
+      if (!ok) $('#atForm').onsubmit = async (e) => { e.preventDefault(); const name = $('#atName').value.trim(), dept = $('#atDept').value.trim(); if (!name) { $('#atMsg').textContent = '이름을 적어 주세요.'; return; }
+        const seenPct = P && typeof watchedPct === 'function' ? watchedPct() : null;
+        try { const r = await api(`api/videos/${id}/attend`, send('POST', { name, dept, seen: seenPct })); ls.set('nick', name); ls.set('dept', dept); const m = ls.get('attended', {}); m[v.id] = name; ls.set('attended', m); render(name, r.count); toast('출석했어요'); } catch (er) { $('#atMsg').textContent = er.message; } }; };
+    render(done, v.attendCount); }
   $('#statBtn').onclick = async () => { const st = await api(`api/videos/${id}/stats`), pc = st.percent, n = pc.length, W = 640, H = 220, L = 40, B = 26, x = (i) => L + i / (n - 1) * (W - L - 8), y = (p) => 8 + (100 - p) / 100 * (H - B - 8);
     let drop = -1, dv = 0; for (let i = 1; i < n; i++) if (pc[i - 1] - pc[i] > dv) { dv = pc[i - 1] - pc[i]; drop = i; }
     const line = pc.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join(''), tAt = (i) => i / n * st.duration;
@@ -607,6 +647,11 @@ async function admin() {
       ${meta.stt ? '<div class="row" style="justify-content:flex-start;margin-top:8px"><button id="insAll" class="small">핵심이 없는 영상 모두 만들기</button></div>' : '<p class="meta">서버에서 tools/install_stt.sh 를 한 번 실행하면 켜져요. 꺼져 있어도 자막 파일을 올리거나 직접 고를 수 있어요.</p>'}${meta.llm ? '' : '<p class="meta">AI 는 서버 환경변수 SUNSUTV_LLM_URL 에 주소를 넣으면 켜져요.</p>'}</div>
     <div class="box"><h2>분류</h2><div id="cats">${meta.categories.map((c) => `<div class="catrow"><input value="${esc(c)}" data-old="${esc(c)}" maxlength="20"><button class="small" data-catdel>지우기</button></div>`).join('')}</div>
       <div class="row" style="justify-content:flex-start"><button id="catAdd" class="small">＋ 분류 추가</button><button id="catSave" class="small primary">분류 저장</button><span class="meta">이름을 바꾸면 영상도 따라 바뀌고, 지운 분류의 영상은 맨 아래 분류로 가요.</span></div></div>
+    <div class="box" id="wmBox"><h2>🏷 로고 넣기</h2><p class="meta">켜 두면 새로 올리는 영상의 구석에 로고(또는 "대외비" 같은 글자)가 자동으로 들어가요. 이미 올린 영상은 영상 화면의 도구 메뉴에서 넣을 수 있어요. 한번 넣으면 영상에서 뺄 수 없어요.</p>
+      <div class="wmrow"><div class="wmprev">${meta.watermark.has ? `<img src="watermark.png?v=${meta.watermark.ver}" alt="지금 로고">` : '<span class="meta">아직 없음</span>'}</div>
+        <div class="wmopt"><div class="row" style="justify-content:flex-start"><label class="filebtn"><input id="wmFile" type="file" accept="image/png,image/jpeg,image/webp" hidden>로고 그림 올리기</label><span class="meta">또는</span><input id="wmText" maxlength="20" placeholder="글자 (예: 대외비)" style="width:160px"><button id="wmMake" class="small">글자로 만들기</button></div>
+          <div class="row" style="justify-content:flex-start;margin-top:8px"><label class="meta">위치 <select id="wmPos" style="width:auto"><option value="br">오른쪽 아래</option><option value="bl">왼쪽 아래</option><option value="tr">오른쪽 위</option><option value="tl">왼쪽 위</option></select></label>
+            <label class="meta">진하기 <input id="wmOp" type="range" min="0.3" max="1" step="0.05" value="${meta.watermark.opacity}" style="width:120px;vertical-align:middle;padding:0"></label><label class="pick" style="padding:0"><input type="checkbox" id="wmOn" ${meta.watermark.on ? 'checked' : ''} ${meta.watermark.has ? '' : 'disabled'}> <b>새 영상에 자동으로 넣기</b></label></div></div></div></div>
     <div class="box" id="dupBox" hidden></div>
     <div class="box"><h2>전체 영상</h2><div class="chips"><select id="aSort"><option value="new">최신순</option><option value="size">용량 큰 순</option><option value="views">조회순</option><option value="reports">신고 많은 순</option></select><span class="sp"></span><span id="selInfo" class="meta"></span><button id="bulkDel" disabled>고른 영상 지우기</button></div>
       <table class="adm"><thead><tr><th><input type="checkbox" id="selAll"></th><th></th><th>제목</th><th>분류</th><th>용량</th><th>길이</th><th>조회</th><th>신고</th><th>상태</th><th></th></tr></thead><tbody>
@@ -622,6 +667,14 @@ async function admin() {
     box.innerHTML = `<h2>겹치는 영상 ${groups.length}묶음</h2><p class="meta">같은 원본으로 보이는 영상이에요. 먼저 올린 것만 남기면 ${mb(groups.reduce((n, g) => n + g.slice(1).reduce((m, v) => m + v.bytes, 0), 0))} 를 아껴요.</p>`
       + groups.map((g, i) => `<div class="duprow">${g.map((v, k) => `<a href="#/v/${v.id}">${k ? '' : '<b>먼저 올림</b> '}${esc(v.title)} <span class="meta">${ago(v.created)} · ${mb(v.bytes)} · 조회 ${v.views}</span></a>`).join('')}<button class="small" data-dup="${i}">나중 것 ${g.length - 1}개 지우기</button></div>`).join('');
     $$('[data-dup]').forEach((b) => b.onclick = async () => { const g = groups[+b.dataset.dup]; if (!confirm(`먼저 올린 '${g[0].title}' 만 남기고 나머지 ${g.length - 1}개를 지울까요? 되돌릴 수 없어요.`)) return; await api('api/admin/delete', send('POST', { ids: g.slice(1).map((v) => v.id) })); admin(); }); }).catch(() => { });
+  $('#wmPos').value = meta.watermark.pos;
+  const wmPut = async (blob, type) => { try { await api(`api/watermark?pos=${$('#wmPos').value}&opacity=${$('#wmOp').value}&on=${$('#wmOn').checked || !meta.watermark.has ? 1 : 0}`, { method: 'PUT', headers: { 'Content-Type': type }, body: blob }); toast('로고를 바꿨어요'); admin(); } catch (e) { alert(e.message); } };
+  $('#wmFile').onchange = (e) => { const f = e.target.files[0]; if (f) wmPut(f, f.type || 'image/png'); };
+  $('#wmMake').onclick = () => { const text = $('#wmText').value.trim(); if (!text) return toast('글자를 적어 주세요'); const c = document.createElement('canvas'), g = c.getContext('2d'), font = '800 120px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif';
+    g.font = font; c.width = Math.ceil(g.measureText(text).width) + 60; c.height = 180; g.font = font; g.textBaseline = 'middle'; g.lineJoin = 'round'; g.lineWidth = 14; g.strokeStyle = 'rgba(0,0,0,.75)'; g.fillStyle = '#fff'; g.strokeText(text, 30, 92); g.fillText(text, 30, 92);
+    c.toBlob((b) => wmPut(b, 'image/png'), 'image/png'); };
+  const wmSet = async () => { try { await api('api/watermark', send('PATCH', { pos: $('#wmPos').value, opacity: +$('#wmOp').value, on: $('#wmOn').checked })); await refreshMeta(); toast($('#wmOn').checked ? '새 영상에 로고를 넣어요' : '저장했어요'); } catch (e) { alert(e.message); admin(); } };
+  $('#wmPos').onchange = wmSet; $('#wmOp').onchange = wmSet; $('#wmOn').onchange = wmSet;
   $$('[data-pin]').forEach((b) => b.onclick = async () => { await api('api/videos/' + b.dataset.pin, send('PATCH', { pinned: b.dataset.on !== 'true' })); toast(b.dataset.on === 'true' ? '필독을 풀었어요' : '홈 맨 위에 고정했어요'); admin(); });
   $$('[data-hide]').forEach((b) => b.onclick = async () => { await api('api/videos/' + b.dataset.hide, send('PATCH', { hidden: b.dataset.on !== 'true' })); admin(); });
   $$('[data-reports]').forEach((b) => b.onclick = async () => { const r = await api(`api/videos/${b.dataset.reports}/reports`);

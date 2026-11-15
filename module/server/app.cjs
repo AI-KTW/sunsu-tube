@@ -80,7 +80,7 @@ function createSunsuTvApp(overrides = {}) {
   const store = createStore(config.dataDir, { categories: config.categories });
   const insight = createInsight(config, store, overrides.log || console.log);
   // 변환이 끝나면 핵심을 뽑는다. 잘라낸 영상은 시간이 달라지므로 처음부터 다시.
-  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') { insight.reset(v); delete v.watch; } if (type === 'trim' || type === 'ingest') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
+  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') { insight.reset(v); delete v.watch; } if (type === 'trim' || type === 'ingest' || type === 'merge') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
   const { db } = store;
 
   // 서버가 꺼졌다 켜지면: 변환 중이던 영상을 다시 줄 세우고, 하루 넘은 올리다 만 파일을 치운다.
@@ -97,7 +97,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', ...(v.liveStarted ? { liveStarted: v.liveStarted } : {}), wasLive: !!v.wasLive, pinned: !!v.pinned, customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', marked: !!v.marked, attend: !!v.attend, attendCount: (v.attendance || []).length, ...(v.liveStarted ? { liveStarted: v.liveStarted } : {}), wasLive: !!v.wasLive, pinned: !!v.pinned, customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -273,6 +273,7 @@ function createSunsuTvApp(overrides = {}) {
         if (b.tags !== undefined) v.tags = tagsOf(b.tags);
         if (b.visibility === 'public' || b.visibility === 'unlisted') v.visibility = b.visibility;
         if (typeof b.hidden === 'boolean') v.hidden = b.hidden;
+        if (typeof b.attend === 'boolean') v.attend = b.attend;   // 출석 받기 켜고 끄기
         if (typeof b.pinned === 'boolean') { v.pinned = b.pinned; v.pinnedAt = b.pinned ? new Date().toISOString() : undefined; }   // 필독: 홈 맨 위에 고정
         if (b.clearReports) v.reports = [];
         store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
@@ -287,6 +288,32 @@ function createSunsuTvApp(overrides = {}) {
       if (m === 'GET') { const url = new URL(req.url, 'http://x'), after = Number(url.searchParams.get('after')) || 0, cid = clean(url.searchParams.get('cid'), 40), now = Date.now();
         const seen = present.get(v.id) || new Map(); present.set(v.id, seen); if (cid) seen.set(cid, now); for (const [k, t] of seen) if (now - t > 12000) seen.delete(k);
         return sendJson(res, 200, { ok: true, messages: room.filter((x) => x.seq > after).slice(-100), last: last(), watching: seen.size }); }
+    }
+    if (sub === 'attend' && m === 'POST') {   // 출석: 이름과 소속을 적고 누른다. 같은 사람은 한 번만 남는다
+      if (!v.attend) throw err(400, '이 영상은 출석을 받지 않아요.');
+      const b = await readJson(req), name = clean(b.name, 20), dept = clean(b.dept, 30); if (!name) throw err(400, '이름을 적어 주세요.');
+      const list = v.attendance = v.attendance || [], seen = Number.isFinite(+b.seen) ? Math.max(0, Math.min(100, Math.round(+b.seen))) : null;
+      const old = list.find((x) => x.name === name && x.dept === dept);
+      if (old) { if (seen != null) old.seen = Math.max(old.seen || 0, seen); } else { if (list.length >= 5000) throw err(400, '출석 명단이 가득 찼어요.'); list.push({ name, dept, at: new Date().toISOString(), seen }); }
+      store.save(); return sendJson(res, 200, { ok: true, count: list.length, already: !!old });
+    }
+    if (sub === 'attendance') {
+      const list = v.attendance || [];
+      if (m === 'DELETE') { v.attendance = []; store.save(); return sendJson(res, 200, { ok: true }); }
+      if (m === 'GET' && new URL(req.url, 'http://x').searchParams.get('csv')) {   // 엑셀에서 바로 열리는 표(CSV)
+        const q = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`, kst = (iso) => new Date(new Date(iso).getTime() + 9 * 3600000).toISOString().replace('T', ' ').slice(0, 19);
+        const body = '\uFEFF' + [['번호', '이름', '소속', '출석 시각', '본 비율(%)'], ...list.map((x, i) => [i + 1, x.name, x.dept, kst(x.at), x.seen ?? ''])].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
+        res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store',
+          'Content-Disposition': `attachment; filename="attendance.csv"; filename*=UTF-8''${encodeURIComponent('출석 명단 - ' + (v.title || '').replace(/[\\/:*?"<>|]/g, ' ').slice(0, 60) + '.csv')}` }); return res.end(body);
+      }
+      if (m === 'GET') return sendJson(res, 200, { ok: true, attendance: list });
+    }
+    if (sub === 'mark' && m === 'POST') {   // 이미 올린 영상에 로고 넣기
+      if (v.kind === 'link') throw err(400, '링크로 건 영상에는 쓸 수 없어요.');
+      if (v.status !== 'ready' || !transcoder.available) throw err(400, '영상 변환이 끝난 뒤에 할 수 있어요.');
+      if (!db.watermark || !db.watermark.on || !fs.existsSync(store.paths.watermark())) throw err(400, '관리 화면에서 로고 넣기를 먼저 켜 주세요.');
+      if (v.marked) throw err(400, '이미 로고가 들어간 영상이에요.');
+      v.status = 'processing'; store.save(); transcoder.enqueueMark(v.id); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
     }
     if (sub === 'watch' && m === 'POST') {   // 어디를 봤는지: 영상을 40칸으로 나눠 본 칸을 센다
       const b = await readJson(req), w = v.watch = v.watch || { n: 0, b: new Array(BUCKETS).fill(0) };
@@ -372,10 +399,15 @@ function createSunsuTvApp(overrides = {}) {
     return fail(res, 405, '지원하지 않는 요청입니다.');
   }
 
+  const markInfo = () => { const w = db.watermark || {}; return { on: !!w.on, has: fs.existsSync(store.paths.watermark()), pos: w.pos || 'br', opacity: w.opacity || 0.85, ver: w.ver || 0 }; };
+  const markSet = (b) => { const w = db.watermark = db.watermark || { pos: 'br', opacity: 0.85, ver: 0 };
+    if (['tl', 'tr', 'bl', 'br'].includes(b.pos)) w.pos = b.pos; if (Number.isFinite(+b.opacity) && +b.opacity >= 0.2 && +b.opacity <= 1) w.opacity = +(+b.opacity).toFixed(2);
+    if (typeof b.on === 'boolean') w.on = b.on; else if (b.on === '1' || b.on === '0') w.on = b.on === '1'; store.save(); };
+
   async function api(req, res, pathname, url) {
     const m = req.method;
     if (pathname === '/api/health') return sendJson(res, 200, { ok: true, module: 'sunsutv', videos: db.videos.length });
-    if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
+    if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, watermark: markInfo(), stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
     if (pathname === '/api/videos' && m === 'GET') return sendJson(res, 200, { ok: true, videos: list(url) });
     if (pathname === '/api/upload' && (m === 'PUT' || m === 'POST')) return uploadWhole(req, res, url);
     // 라이브: 시작(POST /api/live) → 조각(PUT /api/live/:id/chunk) → 끝(POST /api/live/:id/end). 열쇠(key)를 가진 방송 화면만 보낼 수 있다
@@ -409,6 +441,26 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of db.videos) { if (rename[v.category] && next.includes(rename[v.category])) v.category = rename[v.category]; else if (!next.includes(v.category)) v.category = next[next.length - 1]; }
       db.categories.splice(0, db.categories.length, ...next); store.save(); return sendJson(res, 200, { ok: true, categories: db.categories });
     }
+    if (pathname === '/api/watermark') {   // 로고 넣기 설정: 그림을 올리고(PUT), 위치·진하기·켜기를 바꾼다(PATCH)
+      if (m === 'GET') return sendJson(res, 200, { ok: true, watermark: markInfo() });
+      if (m === 'PATCH') { markSet(await readJson(req)); if (db.watermark.on && !markInfo().has) { db.watermark.on = false; store.save(); throw err(400, '로고 그림을 먼저 올려 주세요.'); } return sendJson(res, 200, { ok: true, watermark: markInfo() }); }
+      if (m === 'PUT') { if (!/^image\//.test(req.headers['content-type'] || '')) throw err(400, '그림 파일(PNG, JPG)을 올려 주세요.');
+        const tmp = store.paths.incoming('watermark', '_in'), out = store.paths.watermark() + '.tmp.png'; fs.writeFileSync(tmp, await readBody(req, 8 * 1024 * 1024));
+        const okI = require('node:child_process').spawnSync(config.ffmpeg, ['-y', '-loglevel', 'error', '-i', tmp, '-frames:v', '1', '-vf', "scale='min(800,iw)':-1", out]).status === 0 && fs.existsSync(out); fs.unlink(tmp, () => { });
+        if (!okI) { fs.unlink(out, () => { }); throw err(400, '그림을 읽지 못했어요. PNG 나 JPG 로 올려 주세요.'); }
+        fs.renameSync(out, store.paths.watermark()); markSet(Object.fromEntries(url.searchParams)); db.watermark.ver = Date.now(); store.save(); return sendJson(res, 200, { ok: true, watermark: markInfo() }); }
+      if (m === 'DELETE') { fs.unlink(store.paths.watermark(), () => { }); db.watermark = { on: false, pos: 'br', opacity: 0.85, ver: 0 }; store.save(); return sendJson(res, 200, { ok: true }); }
+    }
+    if (pathname === '/api/merge' && m === 'POST') {   // 영상 합치기: 고른 순서대로 이어 붙여 새 영상을 만든다
+      if (!transcoder.available) throw err(400, 'ffmpeg 가 없어 합칠 수 없어요.');
+      const b = await readJson(req), ids = [...new Set(Array.isArray(b.ids) ? b.ids : [])], vs = ids.map((id) => store.video(id));
+      if (ids.length < 2 || ids.length > 6) throw err(400, '영상을 2개에서 6개까지 골라 주세요.');
+      if (vs.some((x) => !x || x.status !== 'ready' || (x.kind && x.kind !== 'file') || !fs.existsSync(store.paths.media(x.id)))) throw err(400, '합칠 수 없는 영상이 있어요(변환 중이거나 링크·라이브 영상).');
+      const v = newVideo(store.newId(), { title: b.title || vs.map((x) => x.title).join(' + '), cat: vs[0].category, desc: vs[0].desc, tags: [...new Set(vs.flatMap((x) => x.tags || []))].join(','), visibility: vs[0].visibility }, 0, null);
+      delete v.originalBytes; v.mergedFrom = vs.map((x) => x.title); db.videos.push(v); store.save();
+      transcoder.enqueueMerge(v.id, vs.map((x) => store.paths.media(x.id)), () => { if (b.remove === true) { for (const x of vs) if (db.videos.includes(x)) removeVideo(x); store.save(); } });
+      return sendJson(res, 200, { ok: true, video: publicVideo(v) });
+    }
     if (pathname === '/api/admin/duplicates' && m === 'GET') {   // 같은 원본으로 보이는 영상 묶음(먼저 올린 것이 앞)
       const groups = new Map(); for (const v of db.videos) if (v.fp) groups.set(v.fp, [...(groups.get(v.fp) || []), v]);
       return sendJson(res, 200, { ok: true, groups: [...groups.values()].filter((g) => g.length > 1).map((g) => g.sort((a, b) => a.created.localeCompare(b.created)).map(publicVideo)) });
@@ -424,7 +476,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|watch|stats|chat|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|watch|stats|chat|attend|attendance|mark|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }
@@ -442,6 +494,7 @@ function createSunsuTvApp(overrides = {}) {
       if (m) { if (await sendFile(req, res, store.paths.thumb(m[1]), 'image/jpeg', 'private, max-age=86400')) return; return fail(res, 404, '썸네일이 없어요.'); }
       m = new RegExp(`^/live/(${ID})/(live\\.m3u8|init\\.mp4|seg\\d{5}\\.m4s)$`).exec(pathname);   // 라이브 조각
       if (m) { if (await sendFile(req, res, path.join(live.dirOf(m[1]), m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp4', m[2].endsWith('.m3u8') ? 'no-store' : 'private, max-age=600')) return; return fail(res, 404, '방송 조각이 없어요.'); }
+      if (pathname === '/watermark.png') { if (await sendFile(req, res, store.paths.watermark(), 'image/png', 'no-cache')) return; return fail(res, 404, '로고가 없어요.'); }
       m = new RegExp(`^/subs/(${ID})\\.vtt$`).exec(pathname);
       if (m) { const d = insight.read(m[1]); if (!d || !d.transcript || !d.transcript.length) return fail(res, 404, '자막이 없어요.');
         const body = insight.toVtt(d.transcript); res.writeHead(200, { 'Content-Type': TYPES['.vtt'], 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-cache' }); return res.end(body); }
