@@ -36,13 +36,19 @@ const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim(
 const cleanText = (s, max) => String(s ?? '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim().slice(0, max);
 const tagsOf = (s) => [...new Set(String(Array.isArray(s) ? s.join(',') : s ?? '').split(/[,#\s]+/).map((t) => clean(t, 20)).filter(Boolean))].slice(0, 10);
 const today = () => new Date().toISOString().slice(0, 10);
-// 유튜브 주소에서 영상 번호(11자)를 꺼낸다. 영상은 복사하지 않고 링크만 건다.
-function youtubeId(u) {
+// 링크 영상: 다른 곳에 있는 영상의 주소만 등록한다(영상은 복사하지 않는다).
+// 유튜브·비메오는 순수TV 화면 안에서 재생하고, 영상 파일 주소(.mp4 등)는 바로 틀고, 그 밖의 주소는 새 창으로 연다.
+function parseLink(u) {
   let url; try { url = new URL(String(u).trim()); } catch { return null; }
-  const host = url.hostname.replace(/^(www|m|music)\./, ''); let id = null;
-  if (host === 'youtu.be') id = url.pathname.split('/')[1];
-  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') { const p = url.pathname.split('/'); id = p[1] === 'watch' ? url.searchParams.get('v') : ['shorts', 'embed', 'live', 'v'].includes(p[1]) ? p[2] : null; }
-  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  if (!/^https?:$/.test(url.protocol)) return null;
+  const host = url.hostname.replace(/^(www|m|music)\./, ''), p = url.pathname.split('/'); let id = null;
+  if (host === 'youtu.be') id = p[1];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') id = p[1] === 'watch' ? url.searchParams.get('v') : ['shorts', 'embed', 'live', 'v'].includes(p[1]) ? p[2] : null;
+  if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) return { type: 'youtube', id, url: 'https://www.youtube.com/watch?v=' + id };
+  id = host === 'vimeo.com' ? p[1] : host === 'player.vimeo.com' && p[1] === 'video' ? p[2] : null;
+  if (id && /^\d{4,12}$/.test(id)) return { type: 'vimeo', id, url: 'https://vimeo.com/' + id };
+  if (/\.(mp4|webm|m4v|mov|ogv)$/i.test(url.pathname)) return { type: 'file', url: url.href.slice(0, 1000) };
+  return { type: 'page', url: url.href.slice(0, 1000) };
 }
 
 // 파일을 Range 요청에 맞춰 보낸다(영상 건너뛰기용).
@@ -84,7 +90,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', ...(v.yt ? { yt: v.yt } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -232,7 +238,7 @@ function createSunsuTvApp(overrides = {}) {
     const m = req.method, v = store.video(vm[1]);
     if (!v) return fail(res, 404, '영상을 찾지 못했어요.');
     const sub = vm[3], cid = vm[5];
-    if (v.kind === 'link' && ['thumb', 'trim', 'cut', 'blur', 'audio', 'insight', 'subs'].includes(sub)) throw err(400, '유튜브 링크로 건 영상에는 쓸 수 없어요.');
+    if (v.kind === 'link' && ['thumb', 'trim', 'cut', 'blur', 'audio', 'insight', 'subs'].includes(sub)) throw err(400, '링크로 건 영상에는 쓸 수 없어요.');
     if (!sub) {
       if (m === 'GET') {
         const related = db.videos.filter((x) => x.id !== v.id && x.status === 'ready' && listed(x)).map((x) => ({ x, score: (x.category === v.category ? 2 : 0) + (x.tags || []).filter((t) => (v.tags || []).includes(t)).length }))
@@ -326,12 +332,12 @@ function createSunsuTvApp(overrides = {}) {
     if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
     if (pathname === '/api/videos' && m === 'GET') return sendJson(res, 200, { ok: true, videos: list(url) });
     if (pathname === '/api/upload' && (m === 'PUT' || m === 'POST')) return uploadWhole(req, res, url);
-    if (pathname === '/api/links' && m === 'POST') {   // 유튜브 링크 걸기: 영상을 가져오지 않고 주소만 등록한다
-      const b = await readJson(req), yt = youtubeId(b.url);
-      if (!yt) throw err(400, '유튜브 영상 주소가 아니에요. (예: https://youtu.be/…, https://www.youtube.com/watch?v=…)');
+    if (pathname === '/api/links' && m === 'POST') {   // 링크 영상: 영상을 가져오지 않고 주소만 등록한다
+      const b = await readJson(req), link = parseLink(b.url);
+      if (!link) throw err(400, '영상 주소를 넣어 주세요. (http:// 또는 https:// 로 시작하는 주소)');
       const v = newVideo(store.newId(), { ...b, keep: null, clean: null }, 0, null);
       if (!v.title) throw err(400, '제목을 적어 주세요.');
-      delete v.incoming; delete v.originalBytes; Object.assign(v, { kind: 'link', yt, status: 'ready', thumb: true, duration: 0, bytes: 0 });
+      delete v.incoming; delete v.originalBytes; Object.assign(v, { kind: 'link', link, status: 'ready', thumb: link.type === 'youtube', duration: 0, bytes: 0 });
       db.videos.push(v); store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
     }
     if (pathname.startsWith('/api/uploads')) return uploads(req, res, pathname, url);
