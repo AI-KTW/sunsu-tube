@@ -7,7 +7,7 @@ const dur = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m =
 const ago = (iso) => { const d = (Date.now() - new Date(iso)) / 1000; if (d < 60) return '방금'; if (d < 3600) return Math.floor(d / 60) + '분 전'; if (d < 86400) return Math.floor(d / 3600) + '시간 전'; if (d < 86400 * 30) return Math.floor(d / 86400) + '일 전'; return new Date(iso).toLocaleDateString('ko-KR'); };
 const gb = (b) => (b / 1024 ** 3).toFixed(b > 10 * 1024 ** 3 ? 0 : 1) + ' GB', mb = (b) => b > 1024 ** 3 ? gb(b) : (b / 1024 ** 2).toFixed(0) + ' MB';
 const ls = { get: (k, d) => { try { const v = localStorage.getItem('sunsutube.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('sunsutube.' + k, JSON.stringify(v)); } catch { } } };
-let meta = { categories: [] }, state = { q: '', cat: '', sort: 'new' }, poll = null, keyHandler = null, nextTimer = null;
+let meta = { categories: [] }, state = { q: '', cat: '', sort: 'new', all: false }, poll = null, keyHandler = null, nextTimer = null;
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 2200); }
 const thumbUrl = (v) => `thumb/${v.id}.jpg?v=${v.thumbVer || 0}`;
 
@@ -18,13 +18,36 @@ function card(v, opt = {}) {
   const pos = ls.get('pos', {})[v.id], prog = pos && v.duration ? `<span class="prog" style="width:${Math.min(100, pos / v.duration * 100).toFixed(0)}%"></span>` : '';
   const badge = v.visibility === 'unlisted' ? '<span class="badge">링크로만</span>' : v.hidden ? '<span class="badge">숨김</span>' : '';
   return `<a class="card ${opt.cur ? 'cur' : ''}" href="#/v/${v.id}${opt.list ? '?list=' + opt.list : ''}">${opt.remove ? `<button class="x" data-remove="${v.id}" title="${opt.remove}">✕</button>` : ''}
-    <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${prog}</div>
+    <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${v.summary ? `<span class="sumov">${esc(v.summary)}</span>` : ''}${prog}</div>
     <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · ⚡ 핵심 ${dur(v.coreSec)}` : ''}</div></div></a>`;
 }
 const grid = (videos, emptyTitle, emptySub, opt) => videos.length ? `<div class="grid">${videos.map((v) => card(v, opt)).join('')}</div>` : `<div class="empty"><b>${emptyTitle}</b>${emptySub || ''}</div>`;
 
 /* ---------- 홈 · 인기 · 태그 ---------- */
+const shelf = (title, videos, more) => videos.length ? `<section class="shelf"><h2>${more ? `<a ${more}>${esc(title)} <span>모두 보기 ›</span></a>` : esc(title)}</h2>
+  <div class="rail"><button class="arrow l" title="앞으로">‹</button><div class="rowlist">${videos.map((v) => card(v)).join('')}</div><button class="arrow r" title="뒤로">›</button></div></section>` : '';
+async function shelves() {
+  const { videos } = await api('api/videos?sort=new');
+  if (!videos.length) { $('#view').innerHTML = '<div class="empty"><b>아직 영상이 없어요</b>첫 영상을 올려 보세요.</div>'; return; }
+  const ready = videos.filter((v) => v.status === 'ready'), pos = ls.get('pos', {});
+  const pop = ready.filter((v) => v.weekViews > 0).sort((a, b) => b.weekViews - a.weekViews || b.views - a.views).slice(0, 20), h = pop[0] || ready[0];
+  const later = h && ls.get('later', []).includes(h.id);
+  const hero = h ? `<section class="hero"><div class="txt"><span class="kicker">${pop[0] ? '이번 주 가장 많이 본 영상' : '새로 올라온 영상'}</span><h1>${esc(h.title)}</h1>
+      ${h.summary || h.desc ? `<p>${esc(h.summary || h.desc)}</p>` : ''}<div class="meta">${esc(h.category)} · 조회수 ${h.views}회 · ${ago(h.created)} · ${dur(h.duration)}</div>
+      <div class="btns"><a class="btn primary" href="#/v/${h.id}">▶ 재생</a>${h.coreSec ? `<a class="btn" href="#/v/${h.id}?core=1">⚡ 핵심만 보기 (${dur(h.coreSec)})</a>` : ''}<button id="heroLater" class="btn ${later ? 'on' : ''}">${later ? '✓ 담김' : '＋ 나중에 보기'}</button></div></div>
+    <a class="pic" href="#/v/${h.id}" ${h.thumb ? `style="background-image:url('${thumbUrl(h)}')"` : ''}><span>▶</span></a></section>` : '';
+  $('#view').innerHTML = hero + `<div class="chips">${['', ...meta.categories].map((c) => `<button data-cat="${esc(c)}" aria-pressed="${c === ''}">${esc(c) || '전체'}</button>`).join('')}</div>`
+    + shelf('이어 보기', ready.filter((v) => pos[v.id])) + shelf('이번 주 인기', pop, 'href="#/popular"') + shelf('새로 올라온 영상', videos.slice(0, 20), 'data-all')
+    + meta.categories.map((c) => shelf(c, videos.filter((v) => v.category === c).slice(0, 20), `data-cat="${esc(c)}"`)).join('');
+  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; home(); window.scrollTo(0, 0); });
+  $$('[data-all]').forEach((b) => b.onclick = () => { state.all = true; home(); window.scrollTo(0, 0); });
+  $$('.rail').forEach((r) => { const list = $('.rowlist', r), upd = () => { $('.arrow.l', r).hidden = list.scrollLeft < 5; $('.arrow.r', r).hidden = list.scrollLeft + list.clientWidth > list.scrollWidth - 5; };
+    $('.arrow.l', r).onclick = () => list.scrollBy({ left: -list.clientWidth * 0.8, behavior: 'smooth' }); $('.arrow.r', r).onclick = () => list.scrollBy({ left: list.clientWidth * 0.8, behavior: 'smooth' }); list.onscroll = upd; upd(); });
+  if ($('#heroLater')) $('#heroLater').onclick = () => { const l = ls.get('later', []), on = l.includes(h.id); ls.set('later', on ? l.filter((x) => x !== h.id) : [h.id, ...l]); $('#heroLater').classList.toggle('on', !on); $('#heroLater').textContent = on ? '＋ 나중에 보기' : '✓ 담김'; };
+  if (videos.some((v) => v.status === 'processing')) poll = setInterval(() => route(true), 4000);
+}
 async function home(kind, tag) {
+  if (!kind && !tag && !state.q && !state.cat && !state.all) return shelves();
   const p = new URLSearchParams();
   if (kind === 'popular') p.set('sort', 'week'); else { if (state.q) p.set('q', state.q); if (state.cat) p.set('cat', state.cat); p.set('sort', state.sort); }
   if (tag) p.set('tag', tag);
@@ -36,7 +59,7 @@ async function home(kind, tag) {
     <select id="sort"><option value="new">최신순</option><option value="views">조회순</option><option value="likes">좋아요순</option></select></div>${state.q ? `<p class="sub">"${esc(state.q)}" 검색 결과 ${videos.length}개</p>` : ''}`;
   $('#view').innerHTML = head + grid(kind === 'popular' ? videos.filter((v) => v.weekViews > 0).slice(0, 40) : videos, state.q || state.cat || tag ? '찾는 영상이 없어요' : kind === 'popular' ? '아직 본 영상이 없어요' : '아직 영상이 없어요', state.q || state.cat || tag || kind ? '' : '첫 영상을 올려 보세요.');
   if ($('#sort')) { $('#sort').value = state.sort; $('#sort').onchange = (e) => { state.sort = e.target.value; home(); }; }
-  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; home(); });
+  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; if (!b.dataset.cat) { state.all = false; state.q = ''; $('#q').value = ''; } home(); });
   if (videos.some((v) => v.status === 'processing')) poll = setInterval(() => route(true), 4000);
 }
 
@@ -192,6 +215,7 @@ async function watch(id, params) {
     poll = setInterval(async () => { const r = await api(`api/videos/${id}/insight`).catch(() => null); if (!r) return; const done = !['queued', 'working'].includes(r.insight.status);
       if (done) { clearInterval(poll); poll = null; if (r.insight.points.length) toast('핵심을 뽑았어요'); } if (!editing && (done || r.insight.status !== ins.status)) { ins = r.insight; renderCore(); } }, 3000); }
   renderCore(); watchInsight();
+  if (P && params.get('core') === '1' && ins.points.length) P.addEventListener('loadedmetadata', () => { P.currentTime = ins.points[0].s; setCore(true); }, { once: true });
 
   const vote = async (kind) => { const map = ls.get('liked', {}), cur = map[v.id] || 0, want = kind === 'like' ? 1 : -1; let r;
     if (cur === want) { r = await api(`api/videos/${id}/${kind}`, send('POST', { undo: true })); delete map[v.id]; }
@@ -280,8 +304,8 @@ function route(soft) {
   go.catch((e) => { $('#view').innerHTML = `<div class="empty"><b>${esc(e.message)}</b><a href="#/">처음으로</a></div>`; });
 }
 window.addEventListener('hashchange', () => route());
+$$('.logo, .nav [data-nav=home]').forEach((a) => a.addEventListener('click', () => { state.q = ''; state.cat = ''; state.all = false; $('#q').value = ''; if (location.hash === '#/' || location.hash === '') route(); }));
 $('#searchForm').onsubmit = (e) => { e.preventDefault(); state.q = $('#q').value.trim(); state.cat = ''; if (location.hash !== '#/' && location.hash !== '') location.hash = '#/'; else route(); };
-$('#menuBtn').onclick = () => { if (window.innerWidth <= 800) document.body.classList.toggle('shownav'); else document.body.classList.toggle('nonav'); };
 
 async function refreshMeta() {
   meta = await api('api/meta');
