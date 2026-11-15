@@ -1,4 +1,4 @@
-/* 순수튜브 화면. 경로는 모두 상대 경로(런처의 /module/sunsutube/ 아래에서도 동작). 로그인이 없어 시청 기록·나중에 볼 영상·좋아요 표시는 이 브라우저에 기억한다. */
+/* 순수TV 화면. 경로는 모두 상대 경로(런처의 /module/sunsutube/ 아래에서도 동작). 로그인이 없어 시청 기록·나중에 볼 영상·좋아요 표시는 이 브라우저에 기억한다. */
 const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const api = async (url, opt) => { const r = await fetch(url, opt); const j = await r.json().catch(() => ({ ok: false, message: r.statusText })); if (!r.ok || j.ok === false) throw Object.assign(new Error(j.message || '요청 실패'), { status: r.status, body: j }); return j; };
@@ -18,59 +18,51 @@ function card(v, opt = {}) {
   const pos = ls.get('pos', {})[v.id], prog = pos && v.duration ? `<span class="prog" style="width:${Math.min(100, pos / v.duration * 100).toFixed(0)}%"></span>` : '';
   const badge = v.visibility === 'unlisted' ? '<span class="badge">링크로만</span>' : v.hidden ? '<span class="badge">숨김</span>' : '';
   return `<a class="card ${opt.cur ? 'cur' : ''}" href="#/v/${v.id}${opt.list ? '?list=' + opt.list : ''}">${opt.remove ? `<button class="x" data-remove="${v.id}" title="${opt.remove}">✕</button>` : ''}
-    <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${prog}</div>
-    <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · ⚡ 핵심 ${dur(v.coreSec)}` : ''}</div></div></a>`;
+    <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${v.summary ? `<span class="sumov">${esc(v.summary)}</span>` : ''}${prog}</div>
+    <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · ⚡ 핵심 ${dur(v.coreSec)}` : ''}</div>${v.hits && v.hits[0] ? `<div class="hitline"><b>${dur(v.hits[0].s)}</b> “${esc(v.hits[0].t)}”</div>` : ''}</div></a>`;
 }
 const grid = (videos, emptyTitle, emptySub, opt) => videos.length ? `<div class="grid">${videos.map((v) => card(v, opt)).join('')}</div>` : `<div class="empty"><b>${emptyTitle}</b>${emptySub || ''}</div>`;
 
-/* ---------- 홈 · 인기 · 태그: 먼저 읽고, 필요한 장면만 본다 ---------- */
-const hl = (text, words) => { let out = esc(text); for (const w of words || []) if (w) out = out.replace(new RegExp(esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (m) => `<mark>${m}</mark>`); return out; };
-const mini = (v) => v.pts && v.pts.length && v.duration ? `<div class="mini" title="파란 부분이 핵심 구간">${v.pts.map((p) => `<b style="left:${p.s / v.duration * 100}%;width:${(p.e - p.s) / v.duration * 100}%"></b>`).join('')}</div>` : '';
-const steps = (v, max) => (v.pts || []).slice(0, max).map((p, i) => `<a class="step" href="#/v/${v.id}?t=${Math.floor(p.s)}"><i>${i + 1}</i><span>${esc(p.t) || '핵심 구간'}</span><em>${dur(p.s)}</em></a>`).join('');
-// 읽는 카드: 썸네일 + 핵심 띠 + 요약 + 핵심 문장(누르면 그 장면부터)
-function rcard(v, words) {
-  const bg = v.thumb ? `style="background-image:url('${thumbUrl(v)}')"` : '';
-  const st = v.status === 'processing' ? '<span class="state">⏳ 변환 중…</span>' : v.status === 'failed' ? '<span class="state">⚠ 변환 실패</span>' : (v.thumb ? '' : '<span class="state">▶</span>');
-  const pos = ls.get('pos', {})[v.id], prog = pos && v.duration ? `<span class="prog" style="width:${Math.min(100, pos / v.duration * 100).toFixed(0)}%"></span>` : '';
-  const hits = (v.hits || []).map((h) => `<a class="hit" href="#/v/${v.id}?t=${Math.floor(h.s)}"><em>${dur(h.s)}</em><span>“${hl(h.t, words)}”</span></a>`).join('');
-  const text = v.summary || v.desc;
-  return `<article class="rc"><a class="thumb" href="#/v/${v.id}" ${bg}>${st}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${prog}</a>${mini(v)}
-    <div class="rcbody"><a href="#/v/${v.id}"><h3>${hl(v.title, words)}</h3></a>${text ? `<p class="sum">${hl(text, words)}</p>` : ''}
-    ${hits ? `<div class="hits"><b>말한 장면</b>${hits}</div>` : steps(v, 3)}
-    <div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · <a class="corelink" href="#/v/${v.id}?core=1">⚡ 핵심만 ${dur(v.coreSec)}</a>` : ''}</div></div></article>`;
+/* ---------- 홈 · 인기 · 태그 ---------- */
+const shelf = (title, videos, more) => videos.length ? `<section class="shelf"><h2>${more ? `<a ${more}>${esc(title)} <span>모두 보기 ›</span></a>` : esc(title)}</h2>
+  <div class="rail"><button class="arrow l" title="앞으로">‹</button><div class="rowlist">${videos.map((v) => card(v)).join('')}</div><button class="arrow r" title="뒤로">›</button></div></section>` : '';
+async function shelves() {
+  const { videos } = await api('api/videos?sort=new');
+  if (!videos.length) { $('#view').innerHTML = '<div class="empty"><b>아직 영상이 없어요</b>첫 영상을 올려 보세요.</div>'; return; }
+  const ready = videos.filter((v) => v.status === 'ready'), pos = ls.get('pos', {});
+  const pop = ready.filter((v) => v.weekViews > 0).sort((a, b) => b.weekViews - a.weekViews || b.views - a.views).slice(0, 20), h = pop[0] || ready[0];
+  const later = h && ls.get('later', []).includes(h.id);
+  // 큰 화면: 가로 끝까지 16:9. 영상이 소리 없이 흐르고, 설명은 화면 오른쪽 위에 자막처럼 얹는다.
+  const hero = h ? `<section class="hero"><a class="scr" href="#/v/${h.id}" ${h.thumb ? `style="background-image:url('${thumbUrl(h)}')"` : ''}>
+      <video id="heroVid" muted loop playsinline preload="metadata" src="media/${h.id}${h.low ? '_360' : ''}.mp4#t=${h.pts && h.pts[0] ? Math.floor(h.pts[0].s) : 0}"></video></a>
+    <div class="cap"><span class="kicker">${pop[0] ? '이번 주 가장 많이 본 영상' : '새로 올라온 영상'}</span><h1>${esc(h.title)}</h1>
+      ${h.summary || h.desc ? `<p>${esc(h.summary || h.desc)}</p>` : ''}<div class="info">${esc(h.category)} · 조회수 ${h.views}회 · ${ago(h.created)} · ${dur(h.duration)}</div>
+      <div class="btns"><a class="btn primary" href="#/v/${h.id}">▶ 재생</a>${h.coreSec ? `<a class="btn" href="#/v/${h.id}?core=1">⚡ 핵심만 보기 (${dur(h.coreSec)})</a>` : ''}<button id="heroLater" class="btn ${later ? 'on' : ''}">${later ? '✓ 담김' : '＋ 나중에 보기'}</button></div></div></section>` : '';
+  $('#view').innerHTML = hero + `<div class="chips">${['', ...meta.categories].map((c) => `<button data-cat="${esc(c)}" aria-pressed="${c === ''}">${esc(c) || '전체'}</button>`).join('')}</div>`
+    + shelf('이어 보기', ready.filter((v) => pos[v.id])) + shelf('이번 주 인기', pop, 'href="#/popular"') + shelf('새로 올라온 영상', videos.slice(0, 20), 'data-all')
+    + meta.categories.map((c) => shelf(c, videos.filter((v) => v.category === c).slice(0, 20), `data-cat="${esc(c)}"`)).join('');
+  if ($('#heroVid')) $('#heroVid').play().catch(() => { });
+  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; home(); window.scrollTo(0, 0); });
+  $$('[data-all]').forEach((b) => b.onclick = () => { state.all = true; home(); window.scrollTo(0, 0); });
+  $$('.rail').forEach((r) => { const list = $('.rowlist', r), upd = () => { $('.arrow.l', r).hidden = list.scrollLeft < 5; $('.arrow.r', r).hidden = list.scrollLeft + list.clientWidth > list.scrollWidth - 5; };
+    $('.arrow.l', r).onclick = () => list.scrollBy({ left: -list.clientWidth * 0.8, behavior: 'smooth' }); $('.arrow.r', r).onclick = () => list.scrollBy({ left: list.clientWidth * 0.8, behavior: 'smooth' }); list.onscroll = upd; upd(); });
+  if ($('#heroLater')) $('#heroLater').onclick = () => { const l = ls.get('later', []), on = l.includes(h.id); ls.set('later', on ? l.filter((x) => x !== h.id) : [h.id, ...l]); $('#heroLater').classList.toggle('on', !on); $('#heroLater').textContent = on ? '＋ 나중에 보기' : '✓ 담김'; };
+  if (videos.some((v) => v.status === 'processing')) poll = setInterval(() => route(true), 4000);
 }
 async function home(kind, tag) {
+  if (!kind && !tag && !state.q && !state.cat && !state.all) return shelves();
   const p = new URLSearchParams();
   if (kind === 'popular') p.set('sort', 'week'); else { if (state.q) p.set('q', state.q); if (state.cat) p.set('cat', state.cat); p.set('sort', state.sort); }
   if (tag) p.set('tag', tag);
-  let { videos } = await api('api/videos?' + p);
-  if (kind === 'popular') videos = videos.filter((v) => v.weekViews > 0).slice(0, 40);
-  const browse = !kind && !tag && !state.q && !state.cat && state.sort === 'new', words = state.q ? state.q.toLowerCase().split(/\s+/).filter(Boolean) : null, view = ls.get('view', 'read');
-  let top = '';
-  if (browse && videos.length) {
-    const ready = videos.filter((v) => v.status === 'ready'), h = [...ready].sort((a, b) => b.weekViews - a.weekViews)[0], pos = ls.get('pos', {}), cont = ready.filter((v) => pos[v.id]).slice(0, 8);
-    if (h) { const later = ls.get('later', []).includes(h.id); videos = videos.filter((v) => v !== h);
-      top += `<section class="spot"><a class="thumb" href="#/v/${h.id}" ${h.thumb ? `style="background-image:url('${thumbUrl(h)}')"` : ''}><span class="play">▶</span><span class="dur">${dur(h.duration)}</span></a>
-        <div class="txt"><span class="kicker">${h.weekViews ? '이번 주 가장 많이 본 영상' : '새로 올라온 영상'}</span><h1><a href="#/v/${h.id}">${esc(h.title)}</a></h1>${h.summary || h.desc ? `<p class="sum">${esc(h.summary || h.desc)}</p>` : ''}
-        ${h.pts.length ? `<div class="flow">${steps(h, 4)}</div>` : ''}
-        <div class="btns"><a class="btn primary" href="#/v/${h.id}">▶ 처음부터</a>${h.coreSec ? `<a class="btn" href="#/v/${h.id}?core=1">⚡ 핵심만 ${dur(h.coreSec)}</a>` : ''}<button id="spotLater" class="btn ${later ? 'on' : ''}" data-id="${h.id}">${later ? '✓ 담김' : '＋ 나중에'}</button></div></div></section>`; }
-    if (cont.length) top += `<div class="cont"><b>이어 보기</b>${cont.map((v) => `<a href="#/v/${v.id}"><span class="ring" style="--p:${Math.round(pos[v.id] / (v.duration || 1) * 100)}"></span>${esc(v.title)}<em>${dur(Math.max(0, v.duration - pos[v.id]))} 남음</em></a>`).join('')}</div>`;
-  }
-  let head;
+  const { videos } = await api('api/videos?' + p);
+  let head = '';
   if (kind === 'popular') head = '<h1 class="page">🔥 인기 영상</h1><p class="sub">최근 7일 동안 많이 본 순서예요.</p>';
   else if (tag) head = `<h1 class="page">#${esc(tag)}</h1>`;
-  else head = `${state.q ? `<h1 class="page">“${esc(state.q)}” <span class="meta">${videos.length}개 찾음 · 제목, 설명, 영상에서 한 말까지 찾았어요</span></h1>` : ''}
-    <div class="chips">${['', ...meta.categories].map((c) => `<button data-cat="${esc(c)}" aria-pressed="${state.cat === c}">${esc(c) || '전체'}</button>`).join('')}<span class="sp"></span>
-    <select id="sort"><option value="new">최신순</option><option value="views">조회순</option><option value="likes">좋아요순</option></select>
-    <span class="seg"><button data-view="read" aria-pressed="${view === 'read'}" title="요약과 핵심을 읽으며 고르기">읽기</button><button data-view="grid" aria-pressed="${view === 'grid'}" title="썸네일만 크게">그림</button></span></div>`;
-  const emptyT = state.q || state.cat || tag ? '찾는 영상이 없어요' : kind === 'popular' ? '아직 본 영상이 없어요' : top ? '' : '아직 영상이 없어요';
-  const body = videos.length ? (view === 'grid' && !words ? `<div class="grid">${videos.map((v) => card(v)).join('')}</div>` : `<div class="flowgrid">${videos.map((v) => rcard(v, words)).join('')}</div>`)
-    : emptyT ? `<div class="empty"><b>${emptyT}</b>${state.q || state.cat || tag || kind ? '' : '아래 ＋ 버튼으로 첫 영상을 올려 보세요.'}</div>` : '';
-  $('#view').innerHTML = top + head + body;
+  else head = `<div class="chips">${['', ...meta.categories].map((c) => `<button data-cat="${esc(c)}" aria-pressed="${state.cat === c}">${esc(c) || '전체'}</button>`).join('')}<span class="sp"></span>
+    <select id="sort"><option value="new">최신순</option><option value="views">조회순</option><option value="likes">좋아요순</option></select></div>${state.q ? `<p class="sub">"${esc(state.q)}" 검색 결과 ${videos.length}개</p>` : ''}`;
+  $('#view').innerHTML = head + grid(kind === 'popular' ? videos.filter((v) => v.weekViews > 0).slice(0, 40) : videos, state.q || state.cat || tag ? '찾는 영상이 없어요' : kind === 'popular' ? '아직 본 영상이 없어요' : '아직 영상이 없어요', state.q || state.cat || tag || kind ? '' : '첫 영상을 올려 보세요.');
   if ($('#sort')) { $('#sort').value = state.sort; $('#sort').onchange = (e) => { state.sort = e.target.value; home(); }; }
-  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; if (!b.dataset.cat) { state.q = ''; $('#q').value = ''; } home(); });
-  $$('[data-view]').forEach((b) => b.onclick = () => { ls.set('view', b.dataset.view); home(kind, tag); });
-  if ($('#spotLater')) $('#spotLater').onclick = (e) => { const id = e.target.dataset.id, l = ls.get('later', []), on = l.includes(id); ls.set('later', on ? l.filter((x) => x !== id) : [id, ...l]); e.target.classList.toggle('on', !on); e.target.textContent = on ? '＋ 나중에' : '✓ 담김'; };
+  $$('[data-cat]').forEach((b) => b.onclick = () => { state.cat = b.dataset.cat; if (!b.dataset.cat) { state.all = false; state.q = ''; $('#q').value = ''; } home(); });
   if (videos.some((v) => v.status === 'processing')) poll = setInterval(() => route(true), 4000);
 }
 
@@ -204,7 +196,7 @@ async function watch(id, params) {
       return;
     }
     if (!has && tr && tab === 'core' && !busy && !ins.summary) tab = 'script';
-    const core = (ins.summary ? `<p class="sum">${esc(ins.summary)}</p>` : '') + (has ? ins.points.map((p, i) => `<a class="pt" data-s="${p.s}"><i>${i + 1}</i><span class="at">${dur(p.s)}</span>${esc(p.t) || '핵심 구간'} <span class="meta">${Math.max(1, Math.round(p.e - p.s))}초</span></a>`).join('')
+    const core = (ins.summary ? `<p class="sum">${esc(ins.summary)}</p>` : '') + (has ? ins.points.map((p) => `<a class="pt" data-s="${p.s}"><span class="at">${dur(p.s)}</span>${esc(p.t) || '핵심 구간'} <span class="meta">${Math.max(1, Math.round(p.e - p.s))}초</span></a>`).join('')
       : busy ? '' : `<p class="meta">${esc(ins.note) || '아직 핵심 구간이 없어요.'}</p>`) + (has && ins.note ? `<p class="meta">${esc(ins.note)}</p>` : '');
     const script = `<input id="trQ" placeholder="대본에서 찾기" style="margin-bottom:6px">` + ins.transcript.map((x, i) => `<a class="ln ${inPt((x.s + x.e) / 2) >= 0 ? 'core' : ''}" data-i="${i}" data-s="${x.s}"><span class="at">${dur(x.s)}</span>${esc(x.t)}</a>`).join('');
     box.innerHTML = `<header><b>⚡ 핵심 내용</b>${tr ? `<button class="small ${tab === 'core' ? 'on' : ''}" data-tab="core">핵심</button><button class="small ${tab === 'script' ? 'on' : ''}" data-tab="script">전체 대본</button>` : ''}</header>

@@ -1,4 +1,4 @@
-"""순수튜브 음성 인식: 소리 파일을 글(시간 포함)로 바꾼다. faster-whisper 를 쓴다(무료, 서버 안에서만 동작).
+"""순수TV 음성 인식: 소리 파일을 글(시간 포함)로 바꾼다. faster-whisper 를 쓴다(무료, 서버 안에서만 동작).
 
   python stt.py --check            설치됐는지 확인(됐으면 종료 코드 0)
   python stt.py in.wav out.json    out.json = {"segments":[{"start":0.0,"end":2.1,"text":"..."}]}
