@@ -486,3 +486,45 @@ test('실시간 채팅: 새 글만 가져가고, 지금 보는 사람 수를 센
     await s.j('/api/videos/' + id, { method: 'DELETE' }); assert.equal(s.app.store.db.chat[id], undefined);
   } finally { await s.stop(); }
 });
+
+/* ---------- 라이브 ---------- */
+test('라이브: 조각을 받으면 방송 목록이 생기고, 끝내면 일반 영상이 된다', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    // 방송하는 브라우저가 보내는 것과 같은 형식(webm)의 8초짜리 영상을 조각내어 보낸다
+    const webm = path.join(s.dataDir, 'cam.webm');
+    assert.equal(spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=8:size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=8', '-c:v', 'libvpx', '-b:v', '600k', '-c:a', 'libopus', '-shortest', webm]).status, 0);
+    const buf = fs.readFileSync(webm);
+    assert.equal((await s.j('/api/live', J({}))).status, 400, '제목이 있어야 한다');
+    const st = await s.j('/api/live', J({ title: '현장 생중계', cat: '안내' })); assert.equal(st.status, 200);
+    const id = st.body.video.id, key = st.body.key; assert.equal(st.body.video.status, 'live'); assert.equal(st.body.video.kind, 'live'); assert.equal(st.body.video.liveKey, undefined, '열쇠는 방송 화면에만 준다');
+    assert.equal((await s.j('/api/videos')).body.videos[0].status, 'live');
+    assert.equal((await s.j(`/api/live/${id}/chunk?key=wrong`, { method: 'PUT', body: buf.subarray(0, 100) })).status, 403);
+    const n = 8, step = Math.ceil(buf.length / n);
+    for (let i = 0; i < n; i++) assert.equal((await s.j(`/api/live/${id}/chunk?key=${key}`, { method: 'PUT', body: buf.subarray(i * step, (i + 1) * step) })).status, 200);
+    let list = ''; for (let i = 0; i < 100; i++) { const r = await fetch(`${s.base}/live/${id}/live.m3u8`); list = r.status === 200 ? await r.text() : ''; if (/seg00001\.m4s/.test(list)) break; await new Promise((r2) => setTimeout(r2, 150)); }
+    assert.match(list, /#EXT-X-MAP:URI="init\.mp4"/); assert.match(list, /seg00000\.m4s/); assert.match(list, /seg00001\.m4s/);
+    assert.equal((await fetch(`${s.base}/live/${id}/init.mp4`)).status, 200); assert.ok((await (await fetch(`${s.base}/live/${id}/seg00000.m4s`)).arrayBuffer()).byteLength > 1000);
+    assert.equal((await fetch(`${s.base}/live/${id}/../../sunsutv.json`)).status, 404);
+    // 채팅은 방송 중에도 된다
+    assert.equal((await s.j(`/api/videos/${id}/chat`, J({ name: '시청자', text: '잘 보여요' }))).status, 200);
+    // 끝내면 일반 영상으로
+    const en = await s.j(`/api/live/${id}/end?key=${key}`, { method: 'POST' }); assert.equal(en.status, 200); assert.equal(en.body.video.status, 'processing');
+    const v = await s.waitReady(id); assert.equal(v.status, 'ready'); assert.equal(v.kind, 'file'); assert.equal(v.wasLive, true); assert.ok(v.duration > 6.5 && v.duration < 9.5, '길이 ' + v.duration); assert.equal(v.thumb, true);
+    assert.equal((await fetch(`${s.base}/media/${id}.mp4`)).status, 200);
+    assert.ok(!fs.existsSync(path.join(s.dataDir, 'live', id)), '방송 조각은 지운다'); assert.equal((await s.j(`/api/live/${id}/chunk?key=${key}`, { method: 'PUT', body: 'x' })).status, 403);
+  } finally { await s.stop(); }
+});
+test('라이브: 방송 화면이 그냥 닫히면 알아서 끝내고, 소리 없는 방송도 된다', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null, liveIdleMs: 1500 });
+  try {
+    const webm = path.join(s.dataDir, 'mute.webm');
+    spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=5:size=640x360:rate=30', '-c:v', 'libvpx', '-b:v', '600k', webm]);
+    const st = await s.j('/api/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '소리 없는 방송', audio: false }) });
+    const id = st.body.video.id; await s.j(`/api/live/${id}/chunk?key=${st.body.key}`, { method: 'PUT', body: fs.readFileSync(webm) });
+    let v; for (let i = 0; i < 150; i++) { v = (await s.j('/api/videos/' + id)).body.video; if (v.status === 'ready' || v.status === 'failed') break; await new Promise((r) => setTimeout(r, 200)); }
+    assert.equal(v.status, 'ready', v.note); assert.ok(v.duration > 3.5 && v.duration < 6.5, '길이 ' + v.duration);
+    assert.match(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(s.dataDir, 'media', id + '.mp4')], { encoding: 'utf8' }).stdout, /audio/);
+  } finally { await s.stop(); }
+});

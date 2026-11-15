@@ -18,6 +18,7 @@ function createConfig(overrides = {}) {
   const sttCmd = overrides.sttCmd !== undefined ? overrides.sttCmd : envStt === 'off' ? null : envStt ? envStt.trim().split(/\s+/)
     : [fs.existsSync(venvPy) ? venvPy : (process.platform === 'win32' ? 'python' : 'python3'), path.join(moduleRoot, 'tools', 'stt.py')];
   return {
+    liveIdleMs: overrides.liveIdleMs || 30000,   // 방송 조각이 이만큼 안 오면 방송을 끝낸다
     sttCmd,
     sttTimeoutMs: 6 * 3600 * 1000,
     llmUrl: overrides.llmUrl ?? process.env.SUNSUTV_LLM_URL ?? '',
