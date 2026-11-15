@@ -129,14 +129,14 @@ test('화질 360p, 썸네일 고르기, 잘라내기', { skip: !hasFf }, async (
     // 썸네일: 사진 올리기
     const png = path.join(s.dataDir, 'p.png'); spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=red:s=800x600', '-frames:v', '1', png]);
     const pr = await fetch(`${s.base}/api/videos/${id}/thumb`, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: fs.readFileSync(png) }); assert.equal(pr.status, 200);
-    assert.equal(dims(path.join(s.dataDir, 'thumbs', id + '.jpg')), '480,360');
+    assert.equal(dims(path.join(s.dataDir, 'thumbs', id + '.jpg')), '640,480');
     assert.equal((await fetch(`${s.base}/api/videos/${id}/thumb`, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: 'not an image' })).status, 400);
     assert.equal((await fetch(`${s.base}/api/videos/${id}/thumb`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: 'x' })).status, 400);
     // 잘라내기 1~2초
     assert.equal((await s.j(`/api/videos/${id}/trim`, J({ start: 2, end: 1 }))).status, 400);
     const tr = await s.j(`/api/videos/${id}/trim`, J({ start: 1, end: 2 })); assert.equal(tr.body.video.status, 'processing');
     v = await s.waitReady(id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 0.8 && v.duration < 1.4, '길이 ' + v.duration);
-    assert.equal(dims(path.join(s.dataDir, 'thumbs', id + '.jpg')), '480,360', '직접 고른 썸네일은 유지');
+    assert.equal(dims(path.join(s.dataDir, 'thumbs', id + '.jpg')), '640,480', '직접 고른 썸네일은 유지');
     assert.ok(!fs.existsSync(path.join(s.dataDir, 'incoming', id + '_trim.mp4')));
   } finally { await s.stop(); }
 });

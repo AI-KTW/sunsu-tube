@@ -58,8 +58,8 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
 
   async function makeThumb(id, t, fromFile) {
     const out = store.paths.thumb(id);
-    const args = fromFile ? ['-y', '-i', fromFile, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '4', out]
-      : ['-y', '-ss', String(Math.max(0, t || 0)), '-i', store.paths.media(id), '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '4', out];
+    const args = fromFile ? ['-y', '-i', fromFile, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', out]
+      : ['-y', '-ss', String(Math.max(0, t || 0)), '-i', store.paths.media(id), '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', out];
     const r = await run(config.ffmpeg, args);
     return r.code === 0 && fs.existsSync(out);
   }
