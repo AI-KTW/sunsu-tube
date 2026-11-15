@@ -1,4 +1,5 @@
 /* 순수TV: 하늘색과 하얀색의 밝은 화면. 홈은 큰 배너와 가로 줄 목록. */
+[hidden]{display:none!important}
 :root{--bg:#f3f9ff;--panel:#fff;--soft:#e8f4fd;--line:#d3e6f5;--text:#0f2a40;--muted:#5d7890;--accent:#0ea5e9;--accent2:#0284c7;--bad:#dc2626;--shadow:0 6px 22px rgba(14,116,170,.14)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Malgun Gothic",sans-serif}
 a{color:inherit;text-decoration:none}button,input,select,textarea{font:inherit;color:inherit}
@@ -119,3 +120,7 @@ dialog.studio{width:100vw;max-width:100vw;height:100vh;max-height:100vh;margin:0
 .recrow{justify-content:flex-start;margin:10px 0 2px}.recrow .pick{padding:0;margin:0}#recBtn{border-color:#fca5a5;color:#b91c1c}
 #recBar{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:50;display:flex;gap:12px;align-items:center;background:#0f2a40;color:#fff;border-radius:26px;padding:8px 10px 8px 18px;box-shadow:0 10px 30px rgba(0,0,0,.3)}#recBar .meta{color:#b6c8d9}#recBar #recT{font:14px ui-monospace,monospace}
 #recBar .dot{width:12px;height:12px;border-radius:50%;background:#ef4444;animation:blink 1s infinite}@keyframes blink{50%{opacity:.25}}#recBar button{border-radius:18px;background:#ef4444;border-color:#ef4444}
+
+/* 유튜브 링크 */
+iframe.yt{width:100%;aspect-ratio:16/9;max-height:72vh;border:0;border-radius:16px;background:#04121d;display:block;box-shadow:var(--shadow)}.ytnote{margin:8px 2px 0}.thumb .badge.yt{background:#0f2a40}
+.linkrow{display:grid;grid-template-columns:2fr 1.3fr auto;gap:6px;margin:10px 0 12px;padding-top:10px;border-top:1px dashed var(--line)}.linkrow button{white-space:nowrap}@media(max-width:560px){.linkrow{grid-template-columns:1fr}}
