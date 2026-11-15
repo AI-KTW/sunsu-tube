@@ -34,7 +34,7 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
   const queue = [];
   let busy = false;
   const available = hasFfmpeg(config.ffmpeg);
-  if (!available) log('[순수튜브] ffmpeg 를 찾지 못했어요. 영상을 줄이지 않고 원본 그대로 저장합니다.');
+  if (!available) log('[순수TV] ffmpeg 를 찾지 못했어요. 영상을 줄이지 않고 원본 그대로 저장합니다.');
 
   async function makeThumb(id, t, fromFile) {
     const out = store.paths.thumb(id);
@@ -94,7 +94,7 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
       try { if (job.type === 'trim') await trim(v, job.start, job.end); else await ingest(v, job.src); }
       catch (e) { Object.assign(v, { status: v.status === 'processing' && fs.existsSync(store.paths.media(v.id)) ? 'ready' : 'failed', note: String(e.message) }); }
       store.save();
-      if (v.status === 'ready') try { onDone(v, job.type); } catch (e) { log('[순수튜브] ' + e.message); }
+      if (v.status === 'ready') try { onDone(v, job.type); } catch (e) { log('[순수TV] ' + e.message); }
     }
     busy = false;
   }

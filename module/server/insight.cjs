@@ -51,7 +51,7 @@ function createInsight(config, store, log = console.log) {
   const write = (id, data) => { fs.writeFileSync(file(id), JSON.stringify(data)); texts.delete(id); };
   const cached = (id) => { if (!texts.has(id)) { const d = read(id) || {}, segs = d.transcript || []; texts.set(id, { text: segs.map((x) => x.t).join(' ').toLowerCase(), segs, points: d.points || [] }); } return texts.get(id); };
   const sttReady = config.sttCmd && config.sttCmd.length ? run(config.sttCmd[0], [...config.sttCmd.slice(1), '--check'], 60000).then((r) => r.code === 0) : Promise.resolve(false);
-  sttReady.then((ok) => { if (!ok) log('[순수튜브] 음성 인식이 준비되지 않았어요. 핵심 뽑기는 자막 파일을 올리거나 손으로 고를 때만 됩니다. (tools/install_stt.sh)'); });
+  sttReady.then((ok) => { if (!ok) log('[순수TV] 음성 인식이 준비되지 않았어요. 핵심 뽑기는 자막 파일을 올리거나 손으로 고를 때만 됩니다. (tools/install_stt.sh)'); });
   const llmOn = !!config.llmUrl;
 
   async function chat(messages) {

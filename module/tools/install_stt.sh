@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 순수튜브 음성 인식 설치(서버에서 한 번). 모듈 폴더 안에 stt-venv 를 만들고 faster-whisper 와 모델을 받는다.
+# 순수TV 음성 인식 설치(서버에서 한 번). 모듈 폴더 안에 stt-venv 를 만들고 faster-whisper 와 모델을 받는다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY="${PYTHON:-python3}"
