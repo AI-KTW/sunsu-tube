@@ -12,6 +12,8 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8' };
 const ID = '[0-9a-f]{12}';
 const BUCKETS = 40;
+// 질문처럼 보이는 댓글인지
+const isQuestion = (t) => /[?？]|나요|까요|가요\b|ㄴ가|는지|어떻게|어떡|왜\s|언제|어디|얼마|몇\s|무엇|뭐|뭔가|알려\s*주/.test(t);
 
 function sendJson(res, status, body) {
   const s = JSON.stringify(body);
@@ -206,6 +208,7 @@ function createSunsuTvApp(overrides = {}) {
   function removeVideo(v) {
     db.videos.splice(db.videos.indexOf(v), 1);
     for (let i = db.comments.length - 1; i >= 0; i--) if (db.comments[i].video === v.id) db.comments.splice(i, 1);
+    delete db.chat[v.id]; present.delete(v.id);
     for (const p of db.playlists) p.videos = p.videos.filter((x) => x !== v.id);
     for (const f of [store.paths.media(v.id), store.paths.mediaLow(v.id), store.paths.thumb(v.id), v.incoming]) if (f) fs.unlink(f, () => { });
     insight.remove(v.id);
@@ -244,6 +247,9 @@ function createSunsuTvApp(overrides = {}) {
 
   const insightOf = (v) => { const d = insight.read(v.id) || {}; return { status: v.insight || 'none', note: v.insightNote || '', summary: d.summary || '', points: d.points || [], transcript: d.transcript || [], hooks: d.hooks || [], edited: !!d.edited }; };
 
+  const present = new Map();   // 영상별로 지금 보고 있는 화면들(채팅 인원 표시용, 저장하지 않음)
+  if (!db.chat || typeof db.chat !== 'object') db.chat = {};
+
   async function videoApi(req, res, vm) {
     const m = req.method, v = store.video(vm[1]);
     if (!v) return fail(res, 404, '영상을 찾지 못했어요.');
@@ -268,6 +274,15 @@ function createSunsuTvApp(overrides = {}) {
         store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
       }
       if (m === 'DELETE') { removeVideo(v); store.save(); return sendJson(res, 200, { ok: true }); }
+    }
+    if (sub === 'chat') {   // 실시간 채팅: 화면이 2~3초마다 새 글을 가져간다. 로그인이 없어 이름은 각자 적는다
+      const room = db.chat[v.id] = db.chat[v.id] || [], last = () => (room.length ? room[room.length - 1].seq : 0);
+      if (m === 'POST') { const b = await readJson(req), text = clean(b.text, 300); if (!text) throw err(400, '내용을 적어 주세요.');
+        const msg = { seq: last() + 1, name: clean(b.name, 16) || '익명', text, at: new Date().toISOString() }; room.push(msg); if (room.length > 300) room.splice(0, room.length - 300);
+        store.save(); return sendJson(res, 200, { ok: true, message: msg }); }
+      if (m === 'GET') { const url = new URL(req.url, 'http://x'), after = Number(url.searchParams.get('after')) || 0, cid = clean(url.searchParams.get('cid'), 40), now = Date.now();
+        const seen = present.get(v.id) || new Map(); present.set(v.id, seen); if (cid) seen.set(cid, now); for (const [k, t] of seen) if (now - t > 12000) seen.delete(k);
+        return sendJson(res, 200, { ok: true, messages: room.filter((x) => x.seq > after).slice(-100), last: last(), watching: seen.size }); }
     }
     if (sub === 'watch' && m === 'POST') {   // 어디를 봤는지: 영상을 40칸으로 나눠 본 칸을 센다
       const b = await readJson(req), w = v.watch = v.watch || { n: 0, b: new Array(BUCKETS).fill(0) };
@@ -338,7 +353,12 @@ function createSunsuTvApp(overrides = {}) {
         const b = await readJson(req), text = cleanText(b.text, 1000); if (!text) throw err(400, '댓글 내용을 적어 주세요.');
         const parent = b.parent && db.comments.find((c) => c.id === b.parent && c.video === v.id && !c.parent) ? b.parent : null;
         const c = { id: store.newId(), video: v.id, parent, text, at: b.at != null && Number.isFinite(+b.at) ? Math.max(0, +b.at) : null, likes: 0, created: new Date().toISOString() };
-        db.comments.push(c); store.save(); return sendJson(res, 200, { ok: true, comment: c });
+        db.comments.push(c); store.save();
+        // 질문이면 AI 가 영상 내용에서 답을 찾아 답글을 단다(영상에 답이 없으면 달지 않는다)
+        const willAnswer = !parent && v.kind !== 'link' && insight.llmOn && v.subs && isQuestion(text);
+        if (willAnswer) insight.answer(v, text).then((a) => { if (!a || !db.comments.includes(c)) return;
+          db.comments.push({ id: store.newId(), video: v.id, parent: c.id, text: a.text, at: a.at, likes: 0, ai: true, created: new Date().toISOString() }); store.save(); }).catch(() => { });
+        return sendJson(res, 200, { ok: true, comment: c, aiAnswering: willAnswer });
       }
       const c = cid && db.comments.find((x) => x.id === cid && x.video === v.id);
       if (!c) return fail(res, 404, '댓글을 찾지 못했어요.');
@@ -386,7 +406,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|watch|stats|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|watch|stats|chat|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }

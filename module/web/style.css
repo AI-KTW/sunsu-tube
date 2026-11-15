@@ -138,3 +138,20 @@ dialog.wide{width:min(1000px,96vw)}.thgrid{display:grid;grid-template-columns:mi
 .duprow{display:flex;gap:6px 14px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}.duprow a{flex:1 1 240px}.duprow a:hover{color:var(--accent2)}
 .chart{width:100%;height:auto;display:block;margin:6px 0}.chart text{font-size:11px;fill:var(--muted)}.chart .gl{stroke:var(--line);stroke-width:1}.chart .ar{fill:#bae6fd;opacity:.6}.chart .ln2{fill:none;stroke:var(--accent2);stroke-width:2.5;stroke-linejoin:round}
 .chart .dr{stroke:#dc2626;stroke-width:1.5;stroke-dasharray:4 3}.chart .hit{fill:transparent;cursor:pointer}.chart .hit:hover{fill:rgba(14,165,233,.14)}#stGo{cursor:pointer;font-weight:700}
+
+/* AI 답글 */
+.comment.ai{background:var(--soft);border-radius:12px;padding:8px 12px;margin-top:2px}.aitag{color:var(--accent2);cursor:help}
+/* 실시간 채팅 */
+.chatbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}.chatbox header{display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--soft)}.chatbox header .sp{flex:1}.chatbox header b{color:var(--accent2)}
+.chlist{height:240px;overflow:auto;padding:8px 10px;display:flex;flex-direction:column;gap:5px}.chlist>p{margin:auto;text-align:center}
+.cm{align-self:flex-start;max-width:92%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:4px 10px;line-height:1.45}.cm b{color:var(--accent2);font-size:12.5px;margin-right:6px}.cm em{color:var(--muted);font-size:11px;margin-left:6px}
+.cm.me{align-self:flex-end;background:#e0f2fe;border-color:#bae6fd}.chform{display:grid;grid-template-columns:74px 1fr auto;gap:5px;padding:8px;border-top:1px solid var(--line)}.chform input{padding:6px 8px}
+/* 핵심 쇼츠 */
+.rowlist .shcard{flex:0 0 clamp(120px,9.5vw,150px)}.shcard .thumb{aspect-ratio:9/14;border-radius:14px}.shcard .thumb:after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 45%,rgba(4,18,29,.88))}
+.shcard .shtx{position:absolute;left:8px;right:8px;bottom:8px;z-index:1;color:#fff;font-size:12.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.shcard .badge{z-index:1}
+.shorts{display:flex;gap:14px;justify-content:center;align-items:center;height:calc(100vh - 150px);min-height:380px}
+.sh-stage{position:relative;height:100%;aspect-ratio:9/16;max-width:calc(100vw - 100px);background:#04121d;border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}
+#shV{width:100%;height:100%;max-height:none;object-fit:contain;border-radius:0;box-shadow:none;background:#04121d;cursor:pointer}.sh-bar{position:absolute;left:0;right:0;top:0;height:4px;background:rgba(255,255,255,.2)}.sh-bar i{display:block;height:100%;width:0;background:var(--accent)}
+.sh-cap{position:absolute;left:0;right:0;bottom:0;padding:60px 18px 18px;color:#fff;background:linear-gradient(transparent,rgba(4,18,29,.92));pointer-events:none}.sh-cap>*{pointer-events:auto}.sh-cap .kicker{color:#7dd3fc;font-weight:700;font-size:12.5px}
+.sh-cap h2{font-size:17px;margin:4px 0 6px;line-height:1.3}.sh-cap p{margin:0 0 12px;font-size:14.5px;line-height:1.5}.sh-cap .btns{display:flex;gap:8px;flex-wrap:wrap}.sh-cap .btn{border-radius:20px;border-color:transparent;font-weight:600;color:var(--text)}.sh-cap .btn.primary{color:#fff}
+.sh-nav{display:flex;flex-direction:column;gap:10px;align-items:center}.sh-nav button{width:46px;height:46px;border-radius:50%;padding:0;font-size:16px;box-shadow:var(--shadow)}

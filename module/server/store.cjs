@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 function createStore(dataDir, defaults = {}) {
   const file = path.join(dataDir, 'sunsutv.json');
   for (const d of ['', 'incoming', 'media', 'thumbs', 'insight']) fs.mkdirSync(path.join(dataDir, d), { recursive: true });
-  let db = { videos: [], comments: [], playlists: [], uploads: [], categories: null };
+  let db = { videos: [], comments: [], playlists: [], uploads: [], categories: null, chat: {} };
   try { db = { ...db, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { }
   if (!Array.isArray(db.categories) || !db.categories.length) db.categories = [...(defaults.categories || ['기타'])];
   let timer = null;
