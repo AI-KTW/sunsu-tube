@@ -25,7 +25,7 @@ h1.page{font-size:22px;margin:0 0 14px}.sub{color:var(--muted);margin:-8px 0 14p
 .hero:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(270deg,rgba(2,18,30,.72) 0,rgba(2,18,30,.35) 34%,transparent 62%),linear-gradient(0deg,rgba(2,18,30,.45) 0,transparent 30%)}
 .hero .cap{position:absolute;z-index:2;right:4vw;bottom:7%;width:min(40vw,620px);text-align:right;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.85),0 0 18px rgba(0,0,0,.6);pointer-events:none}
 .hero .cap>*{pointer-events:auto}.hero .kicker{display:inline-block;color:#7dd3fc;font-size:clamp(11px,1vw,14px);font-weight:700;letter-spacing:.5px}
-.hero h1{font-size:clamp(20px,3.4vw,54px);line-height:1.2;margin:.2em 0 .25em;letter-spacing:-1px}.hero p{font-size:clamp(12.5px,1.25vw,19px);line-height:1.55;margin:0 0 .4em;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.hero h1{word-break:keep-all;font-size:clamp(20px,3.4vw,54px);line-height:1.2;margin:.2em 0 .25em;letter-spacing:-1px}.hero p{font-size:clamp(12.5px,1.25vw,19px);line-height:1.55;margin:0 0 .4em;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .hero .info{font-size:clamp(11px,.9vw,13.5px);opacity:.85}.hero .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;margin-top:1.1em;text-shadow:none}
 .hero .btn{padding:.6em 1.4em;border-radius:26px;font-size:clamp(12.5px,1.05vw,16px);font-weight:600;border-color:transparent;color:var(--text)}.hero .btn.primary{color:#fff}.hero .btn.on{background:var(--accent2);color:#fff}
 @media(max-width:700px){.hero .cap{width:62vw;right:3vw;bottom:5%}.hero p,.hero .info{display:none}.hero .btn:not(.primary){display:none}}
@@ -125,3 +125,9 @@ dialog.studio{width:100vw;max-width:100vw;height:100vh;max-height:100vh;margin:0
 .linkpage{display:grid;place-content:center;justify-items:center;gap:14px;color:#dbe7f3}.linkpage p{margin:0}
 .yt{width:100%;aspect-ratio:16/9;max-height:72vh;border:0;border-radius:16px;background:#04121d;display:block;box-shadow:var(--shadow)}.ytnote{margin:8px 2px 0}.thumb .badge.yt{background:#0f2a40}
 .linkrow{display:grid;grid-template-columns:2fr 1.3fr auto;gap:6px;margin:10px 0 12px;padding-top:10px;border-top:1px dashed var(--line)}.linkrow button{white-space:nowrap}@media(max-width:560px){.linkrow{grid-template-columns:1fr}}
+
+/* 썸네일 만들기 */
+dialog.wide{width:min(1000px,96vw)}.thgrid{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:16px;align-items:start}@media(max-width:760px){.thgrid{grid-template-columns:1fr}}
+#thCv{width:100%;aspect-ratio:16/9;border-radius:14px;background:#04121d;display:block;box-shadow:var(--shadow)}.thopt label{margin-bottom:10px}.thopt .pick{color:var(--text);font-size:14px}
+.thcands{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}.thc{padding:0;border:2px solid transparent;border-radius:10px;overflow:hidden;background:#04121d;position:relative;line-height:0}
+.thc canvas{width:100%;aspect-ratio:16/9;display:block}.thc span{position:absolute;right:4px;bottom:4px;background:rgba(15,42,64,.82);color:#fff;border-radius:5px;padding:0 5px;font-size:11px;line-height:1.5}.thc.on{border-color:var(--accent);box-shadow:0 0 0 2px #bae6fd}
