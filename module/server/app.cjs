@@ -77,7 +77,7 @@ async function sendFile(req, res, file, type, cache = 'no-cache', extra = {}) {
 
 function createSunsuTvApp(overrides = {}) {
   const config = createConfig(overrides);
-  const store = createStore(config.dataDir, { categories: config.categories });
+  const store = createStore(config.dataDir, { categories: config.categories }, overrides.log || console.log);
   const insight = createInsight(config, store, overrides.log || console.log);
   // 변환이 끝나면 핵심을 뽑는다. 잘라낸 영상은 시간이 달라지므로 처음부터 다시.
   const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') { insight.reset(v); delete v.watch; } if (type === 'trim' || type === 'ingest' || type === 'merge') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
@@ -460,6 +460,15 @@ function createSunsuTvApp(overrides = {}) {
       delete v.originalBytes; v.mergedFrom = vs.map((x) => x.title); db.videos.push(v); store.save();
       transcoder.enqueueMerge(v.id, vs.map((x) => store.paths.media(x.id)), () => { if (b.remove === true) { for (const x of vs) if (db.videos.includes(x)) removeVideo(x); store.save(); } });
       return sendJson(res, 200, { ok: true, video: publicVideo(v) });
+    }
+    if (pathname === '/api/admin/backups') {   // 기록 백업: 목록 보기, 지금 한 벌 남기기
+      if (m === 'POST') store.backupNow();
+      if (m === 'GET' || m === 'POST') return sendJson(res, 200, { ok: true, backups: store.backupList(), restoredFrom: store.restoredFrom, keepDays: 14 });
+    }
+    if (pathname === '/api/admin/backup' && m === 'GET') {   // 백업 파일 내려받기(name 이 없으면 지금 상태)
+      const name = url.searchParams.get('name'), f = name ? store.backupPath(name) : (store.flush(), store.file);
+      if (!f || !fs.existsSync(f)) return fail(res, 404, '백업 파일이 없어요.');
+      if (await sendFile(req, res, f, 'application/json; charset=utf-8', 'no-store', { 'Content-Disposition': `attachment; filename="${name || 'sunsutv-' + today() + '-now.json'}"` })) return;
     }
     if (pathname === '/api/admin/duplicates' && m === 'GET') {   // 같은 원본으로 보이는 영상 묶음(먼저 올린 것이 앞)
       const groups = new Map(); for (const v of db.videos) if (v.fp) groups.set(v.fp, [...(groups.get(v.fp) || []), v]);
