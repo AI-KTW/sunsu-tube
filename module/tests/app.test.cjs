@@ -27,7 +27,7 @@ test('올리기 → 720p 압축 → 목록·검색·재생(Range)·조회·좋�
   const s = await start();
   try {
     const src = sample(s.dataDir);
-    const q = new URLSearchParams({ filename: '제수밸브 교체.mp4', title: '3가압장 제수밸브 교체', cat: '밸브·계량기', desc: '순서와 주의점', tags: '제수밸브, 150A', author: '시설과 홍길동' });
+    const q = new URLSearchParams({ filename: '제수밸브 교체.mp4', title: '3가압장 제수밸브 교체', cat: '작업 기록', desc: '순서와 주의점', tags: '제수밸브, 150A' });
     const up = await s.j('/api/upload?' + q, { method: 'PUT', body: fs.readFileSync(src) });
     assert.equal(up.status, 200); assert.equal(up.body.video.status, 'processing');
     const id = up.body.video.id;
@@ -38,9 +38,9 @@ test('올리기 → 720p 압축 → 목록·검색·재생(Range)·조회·좋�
     assert.ok(!fs.existsSync(path.join(s.dataDir, 'incoming', id + '.mp4')), '원본은 지운다');
     // 목록·검색
     assert.equal((await s.j('/api/videos')).body.videos.length, 1);
-    assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('제수밸브 홍길동'))).body.videos.length, 1);
+    assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('제수밸브 150A'))).body.videos.length, 1);
     assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('펌프'))).body.videos.length, 0);
-    assert.equal((await s.j('/api/videos?cat=' + encodeURIComponent('안전'))).body.videos.length, 0);
+    assert.equal((await s.j('/api/videos?cat=' + encodeURIComponent('안내'))).body.videos.length, 0);
     // 재생: 전체와 일부(Range)
     const full = await fetch(`${s.base}/media/${id}.mp4`); assert.equal(full.status, 200); assert.equal(full.headers.get('content-type'), 'video/mp4'); await full.arrayBuffer();
     const part = await fetch(`${s.base}/media/${id}.mp4`, { headers: { Range: 'bytes=100-199' } }); assert.equal(part.status, 206); assert.equal((await part.arrayBuffer()).byteLength, 100); assert.match(part.headers.get('content-range'), /^bytes 100-199\/\d+$/);
@@ -48,7 +48,7 @@ test('올리기 → 720p 압축 → 목록·검색·재생(Range)·조회·좋�
     // 조회·좋아요·댓글
     assert.equal((await s.j(`/api/videos/${id}/view`, { method: 'POST' })).body.views, 1);
     assert.equal((await s.j(`/api/videos/${id}/like`, { method: 'POST' })).body.likes, 1);
-    const c = await s.j(`/api/videos/${id}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: '김주무관', text: '여기서 토크 얼마로 조여요?', at: 2 }) });
+    const c = await s.j(`/api/videos/${id}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '여기서 토크 얼마로 조여요?', at: 2 }) });
     assert.equal(c.status, 200); assert.equal(c.body.comment.at, 2);
     assert.equal((await s.j(`/api/videos/${id}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '  ' }) })).status, 400);
     let d = await s.j('/api/videos/' + id); assert.equal(d.body.comments.length, 1); assert.equal(d.body.video.comments, 1);
@@ -58,7 +58,7 @@ test('올리기 → 720p 압축 → 목록·검색·재생(Range)·조회·좋�
     // 저장 파일에 남는지(재시작 대비)
     s.app.store.flush(); assert.equal(JSON.parse(fs.readFileSync(path.join(s.dataDir, 'sunsutube.json'), 'utf8')).videos[0].title, '제수밸브 교체(개정)');
     // 통계
-    const meta = (await s.j('/api/meta')).body; assert.equal(meta.videos, 1); assert.ok(meta.usedBytes > 0); assert.ok(meta.categories.includes('안전'));
+    const meta = (await s.j('/api/meta')).body; assert.equal(meta.videos, 1); assert.ok(meta.usedBytes > 0); assert.ok(meta.categories.includes('안내'));
     // 삭제
     assert.equal((await s.j(`/api/videos/${id}/comments/${c.body.comment.id}`, { method: 'DELETE' })).status, 200);
     assert.equal((await s.j('/api/videos/' + id, { method: 'DELETE' })).status, 200);

@@ -59,7 +59,7 @@ function createSunsuTubeApp(overrides = {}) {
     if (src) transcoder.enqueue(v.id, src); else Object.assign(v, { status: 'failed', note: '서버가 다시 켜지면서 원본을 잃었어요. 다시 올려 주세요.' });
   }
 
-  const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, author: v.author, created: v.created, status: v.status,
+  const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, likes: v.likes || 0, thumb: !!v.thumb, note: v.note || '', comments: store.commentsOf(v.id).length });
 
   function list(url) {
@@ -67,7 +67,7 @@ function createSunsuTubeApp(overrides = {}) {
     let out = db.videos.filter((v) => (!cat || v.category === cat));
     if (q) {
       const words = q.split(/\s+/).filter(Boolean);
-      out = out.filter((v) => { const text = [v.title, v.desc, v.category, v.author, ...(v.tags || [])].join(' ').toLowerCase(); return words.every((w) => text.includes(w)); });
+      out = out.filter((v) => { const text = [v.title, v.desc, v.category, ...(v.tags || [])].join(' ').toLowerCase(); return words.every((w) => text.includes(w)); });
     }
     out = [...out].sort(sort === 'views' ? (a, b) => (b.views || 0) - (a.views || 0) : sort === 'likes' ? (a, b) => (b.likes || 0) - (a.likes || 0) : (a, b) => b.created.localeCompare(a.created));
     return out.map(publicVideo);
@@ -92,7 +92,7 @@ function createSunsuTubeApp(overrides = {}) {
     }
     const cat = url.searchParams.get('cat');
     const v = { id, title, desc: clean(url.searchParams.get('desc'), 2000), category: config.categories.includes(cat) ? cat : '기타', tags: tagsOf(url.searchParams.get('tags')),
-      author: clean(url.searchParams.get('author'), 30) || '이름 없음', created: new Date().toISOString(), status: 'processing', originalBytes: bytes, incoming: dest, views: 0, likes: 0 };
+      created: new Date().toISOString(), status: 'processing', originalBytes: bytes, incoming: dest, views: 0, likes: 0 };
     db.videos.push(v); store.save();
     transcoder.enqueue(id, dest);
     sendJson(res, 200, { ok: true, video: publicVideo(v) });
@@ -143,7 +143,7 @@ function createSunsuTubeApp(overrides = {}) {
     if (sub === 'comments' && m === 'POST' && !vm[5]) {
       const b = await readJson(req), text = clean(b.text, 1000);
       if (!text) return fail(res, 400, '댓글 내용을 적어 주세요.');
-      const c = { id: store.newId(), video: v.id, author: clean(b.author, 30) || '이름 없음', text, at: Number.isFinite(+b.at) ? Math.max(0, +b.at) : null, created: new Date().toISOString() };
+      const c = { id: store.newId(), video: v.id, text, at: Number.isFinite(+b.at) ? Math.max(0, +b.at) : null, created: new Date().toISOString() };
       db.comments.push(c); store.save(); return sendJson(res, 200, { ok: true, comment: c });
     }
     if (sub === 'comments' && m === 'DELETE' && vm[5]) {

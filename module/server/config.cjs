@@ -17,7 +17,7 @@ function createConfig(overrides = {}) {
     maxBytes: Number(overrides.maxGb ?? process.env.SUNSUTUBE_MAX_GB ?? 4) * 1024 ** 3,
     ffmpeg: overrides.ffmpeg || process.env.SUNSUTUBE_FFMPEG || 'ffmpeg',
     ffprobe: overrides.ffprobe || process.env.SUNSUTUBE_FFPROBE || 'ffprobe',
-    categories: ['관로·누수', '밸브·계량기', '정수·수질', '펌프·전기', '안전', '민원·행정', '교육', '기타'],
+    categories: ['교육', '작업 기록', '회의·발표', '안내', '기타'],
     videoExts: ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.3gp']
   };
 }

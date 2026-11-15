@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "sunsutube",
   "name": "순수튜브",
-  "description": "365일 현장 기술 영상 — 직원이 올리고 찾아 보는 사내 영상 플랫폼",
+  "description": "사내 영상 플랫폼",
   "version": "0.1.0",
   "type": "application",
   "entry": "web/index.html",
