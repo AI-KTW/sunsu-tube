@@ -9,21 +9,18 @@
 </head>
 <body>
 <header class="top">
-  <button id="menuBtn" class="ghost icon" title="메뉴">☰</button>
   <a class="logo" href="#/"><span class="mark">▶</span> 순수튜브</a>
-  <form id="searchForm" class="search"><input id="q" placeholder="검색" autocomplete="off"><button title="찾기">🔍</button></form>
+  <nav id="side" class="nav">
+    <a href="#/" data-nav="home">홈</a>
+    <a href="#/popular" data-nav="popular">인기</a>
+    <a href="#/playlists" data-nav="playlists">재생 목록</a>
+    <a href="#/history" data-nav="history">시청 기록</a>
+    <a href="#/later" data-nav="later">나중에 볼 영상</a>
+    <a href="#/admin" data-nav="admin">관리</a>
+  </nav>
+  <form id="searchForm" class="search"><input id="q" placeholder="제목이나 말한 내용으로 검색" autocomplete="off"><button title="찾기">🔍</button></form>
   <button id="uploadBtn" class="primary">＋ 영상 올리기</button>
 </header>
-<nav id="side" class="nav">
-  <a href="#/" data-nav="home">🏠 홈</a>
-  <a href="#/popular" data-nav="popular">🔥 인기</a>
-  <a href="#/playlists" data-nav="playlists">📚 재생 목록</a>
-  <hr>
-  <a href="#/history" data-nav="history">🕘 시청 기록</a>
-  <a href="#/later" data-nav="later">⏰ 나중에 볼 영상</a>
-  <hr>
-  <a href="#/admin" data-nav="admin">⚙ 관리</a>
-</nav>
 <main id="view"></main>
 <footer class="foot"><span id="disk"></span></footer>
 
