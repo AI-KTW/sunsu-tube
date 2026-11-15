@@ -376,3 +376,26 @@ test('가리기: 그린 곳만, 정한 시간에만 모자이크. 소리 정리:
     v = await s.waitReady(done.body.video.id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4); assert.equal(s.app.store.video(v.id).cleanAudio, undefined);
   } finally { await s.stop(); }
 });
+
+/* ---------- 유튜브 링크 걸기 ---------- */
+test('유튜브 링크 걸기: 주소만 등록하고 영상은 저장하지 않는다', async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    for (const bad of ['', 'https://example.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=short', 'youtube']) assert.equal((await s.j('/api/links', J({ url: bad, title: 'x' }))).status, 400, bad);
+    assert.equal((await s.j('/api/links', J({ url: 'https://youtu.be/dQw4w9WgXcQ' }))).status, 400, '제목이 있어야 한다');
+    const ids = [];
+    for (const u of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10s', 'https://youtu.be/dQw4w9WgXcQ?si=abc', 'https://m.youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/embed/dQw4w9WgXcQ', 'https://www.youtube.com/live/dQw4w9WgXcQ']) {
+      const r = await s.j('/api/links', J({ url: u, title: '수돗물 이야기', cat: '안내', tags: '홍보' })); assert.equal(r.status, 200, u); assert.equal(r.body.video.yt, 'dQw4w9WgXcQ'); ids.push(r.body.video.id);
+    }
+    const v = (await s.j('/api/videos/' + ids[0])).body.video;
+    assert.equal(v.kind, 'link'); assert.equal(v.status, 'ready'); assert.equal(v.bytes, 0); assert.equal(v.category, '안내'); assert.deepEqual(v.tags, ['홍보']);
+    assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('수돗물'))).body.videos.length, 5);
+    assert.deepEqual(fs.readdirSync(path.join(s.dataDir, 'media')), [], '영상 파일은 저장하지 않는다');
+    for (const sub of ['trim', 'cut', 'blur', 'audio', 'insight', 'thumb']) assert.equal((await s.j(`/api/videos/${ids[0]}/${sub}`, J({}))).status, 400, sub);
+    assert.equal((await s.j(`/api/videos/${ids[0]}/view`, { method: 'POST' })).body.views, 1);
+    assert.equal((await s.j(`/api/videos/${ids[0]}/comments`, J({ text: '좋아요' }))).status, 200);
+    assert.equal((await s.j('/api/videos/' + ids[0], { method: 'DELETE' })).status, 200);
+    assert.equal((await s.j('/api/meta')).body.videos, 4);
+  } finally { await s.stop(); }
+});
