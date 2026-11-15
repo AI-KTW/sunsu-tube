@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 
 // 작은 JSON 저장소. 영상 수천 개까지는 이걸로 충분하다(파일 하나, 임시 파일에 쓰고 바꿔치기).
 function createStore(dataDir, defaults = {}) {
-  const file = path.join(dataDir, 'sunsutube.json');
+  const file = path.join(dataDir, 'sunsutv.json');
   for (const d of ['', 'incoming', 'media', 'thumbs', 'insight']) fs.mkdirSync(path.join(dataDir, d), { recursive: true });
   let db = { videos: [], comments: [], playlists: [], uploads: [], categories: null };
   try { db = { ...db, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { }

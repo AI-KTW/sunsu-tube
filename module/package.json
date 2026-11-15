@@ -1,1 +1,1 @@
-{ "name": "sunsutube-module", "version": "0.1.0", "private": true, "description": "순수TV: 사내 현장 기술 영상 플랫폼", "scripts": { "start": "node server/index.cjs", "test": "node --test tests/app.test.cjs" } }
+{ "name": "sunsutv-module", "version": "0.1.0", "private": true, "description": "순수TV: 사내 현장 기술 영상 플랫폼", "scripts": { "start": "node server/index.cjs", "test": "node --test tests/app.test.cjs" } }

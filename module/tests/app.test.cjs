@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { createSunsuTubeApp } = require('../server/app.cjs');
+const { createSunsuTvApp } = require('../server/app.cjs');
 
 const hasFf = spawnSync('ffmpeg', ['-version']).status === 0;
 function sample(dir, name = 'in.mp4', size = '1920x1080') {
@@ -14,8 +14,8 @@ function sample(dir, name = 'in.mp4', size = '1920x1080') {
   return f;
 }
 async function start(opts = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunsutube-'));
-  const app = createSunsuTubeApp({ dataDir, port: 0, log: () => { }, ...opts });
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunsutv-'));
+  const app = createSunsuTvApp({ dataDir, port: 0, log: () => { }, ...opts });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const j = async (p, o) => { const r = await fetch(base + p, o); return { status: r.status, body: await r.json() }; };
@@ -56,7 +56,7 @@ test('올리기 → 720p 압축 → 목록·검색·재생(Range)·조회·좋�
     const p = await s.j('/api/videos/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '제수밸브 교체(개정)', tags: '밸브 교체' }) });
     assert.equal(p.body.video.title, '제수밸브 교체(개정)'); assert.deepEqual(p.body.video.tags, ['밸브', '교체']);
     // 저장 파일에 남는지(재시작 대비)
-    s.app.store.flush(); assert.equal(JSON.parse(fs.readFileSync(path.join(s.dataDir, 'sunsutube.json'), 'utf8')).videos[0].title, '제수밸브 교체(개정)');
+    s.app.store.flush(); assert.equal(JSON.parse(fs.readFileSync(path.join(s.dataDir, 'sunsutv.json'), 'utf8')).videos[0].title, '제수밸브 교체(개정)');
     // 통계
     const meta = (await s.j('/api/meta')).body; assert.equal(meta.videos, 1); assert.ok(meta.usedBytes > 0); assert.ok(meta.categories.includes('안내'));
     // 삭제
@@ -86,7 +86,7 @@ test('잘못된 올리기와 경로는 거절', async () => {
     assert.equal(fs.readdirSync(path.join(s.dataDir, 'incoming')).length, 0, '거절한 파일은 남기지 않는다');
     assert.equal((await s.j('/api/videos/000000000000')).status, 404);
     assert.equal((await s.j('/api/nope')).status, 404);
-    assert.equal((await fetch(s.base + '/media/..%2F..%2Fsunsutube.json')).status, 404);
+    assert.equal((await fetch(s.base + '/media/..%2F..%2Fsunsutv.json')).status, 404);
     assert.equal((await fetch(s.base + '/..%2Fserver%2Fapp.cjs')).status, 404);
     assert.equal((await fetch(s.base + '/')).status, 200);
     assert.equal((await s.j('/api/health')).body.ok, true);

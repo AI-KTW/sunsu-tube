@@ -56,7 +56,7 @@ async function sendFile(req, res, file, type, cache = 'no-cache') {
   return true;
 }
 
-function createSunsuTubeApp(overrides = {}) {
+function createSunsuTvApp(overrides = {}) {
   const config = createConfig(overrides);
   const store = createStore(config.dataDir, { categories: config.categories });
   const insight = createInsight(config, store, overrides.log || console.log);
@@ -299,7 +299,7 @@ function createSunsuTubeApp(overrides = {}) {
 
   async function api(req, res, pathname, url) {
     const m = req.method;
-    if (pathname === '/api/health') return sendJson(res, 200, { ok: true, module: 'sunsutube', videos: db.videos.length });
+    if (pathname === '/api/health') return sendJson(res, 200, { ok: true, module: 'sunsutv', videos: db.videos.length });
     if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
     if (pathname === '/api/videos' && m === 'GET') return sendJson(res, 200, { ok: true, videos: list(url) });
     if (pathname === '/api/upload' && (m === 'PUT' || m === 'POST')) return uploadWhole(req, res, url);
@@ -352,4 +352,4 @@ function createSunsuTubeApp(overrides = {}) {
   return { config, server, store, transcoder, insight };
 }
 
-module.exports = { createSunsuTubeApp };
+module.exports = { createSunsuTvApp };

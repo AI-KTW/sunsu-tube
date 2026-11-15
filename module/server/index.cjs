@@ -1,6 +1,6 @@
-const { createSunsuTubeApp } = require('./app.cjs');
+const { createSunsuTvApp } = require('./app.cjs');
 
-const { config, server, store } = createSunsuTubeApp();
+const { config, server, store } = createSunsuTvApp();
 
 server.listen(config.port, config.host, () => {
   console.log(`[순수TV] http://${config.host}:${config.port}  (영상 폴더: ${config.dataDir})`);
