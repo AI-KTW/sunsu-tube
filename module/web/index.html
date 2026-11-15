@@ -20,6 +20,7 @@
     <a href="#/admin" data-nav="admin">관리</a>
   </nav>
   <form id="searchForm" class="search"><input id="q" placeholder="제목이나 말한 내용으로 검색" autocomplete="off"><button title="찾기">🔍</button></form>
+  <button id="liveTop" class="livebtn" title="지금 카메라로 방송하기">🔴 라이브</button>
   <button id="uploadBtn" class="primary">＋ 영상 올리기</button>
 </header>
 <main id="view"></main>
@@ -29,7 +30,7 @@
   <form id="uploadForm" method="dialog">
     <h2>영상 올리기</h2>
     <label class="drop" id="drop"><input id="file" type="file" accept="video/*,.mkv,.avi,.mov,.3gp" multiple hidden><b>영상 파일 고르기 (여러 개 가능)</b><span>또는 여기에 끌어다 놓으세요</span></label>
-    <div class="row recrow"><button type="button" id="recBtn">⏺ 화면 녹화해서 올리기</button><span class="sp"></span><label class="pick"><input type="checkbox" id="upClean"> 소리 정리 (잡음 줄이고 크기 맞추기)</label></div>
+    <div class="row recrow"><button type="button" id="liveBtn">🔴 라이브 방송</button><button type="button" id="recBtn">⏺ 화면 녹화해서 올리기</button><span class="sp"></span><label class="pick"><input type="checkbox" id="upClean"> 소리 정리 (잡음 줄이고 크기 맞추기)</label></div>
     <div id="upList"></div>
     <div class="linkrow"><input id="lnkUrl" placeholder="또는 영상 주소 붙여 넣기 (영상은 복사하지 않고 링크만 걸어요)"><input id="lnkTitle" maxlength="100" placeholder="제목"><button type="button" id="lnkAdd">🔗 링크 영상 추가</button></div>
     <label>분류 <select id="upCat"></select></label>

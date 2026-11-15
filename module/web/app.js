@@ -14,9 +14,9 @@ const thumbUrl = (v) => (v.link && v.link.type === 'youtube' ? `https://i.ytimg.
 /* ---------- 카드 ---------- */
 function card(v, opt = {}) {
   const bg = v.thumb ? `style="background-image:url('${thumbUrl(v)}')"` : '';
-  const st = v.status === 'processing' ? '<span class="state">⏳ 변환 중…</span>' : v.status === 'failed' ? '<span class="state">⚠ 변환 실패</span>' : (v.thumb ? '' : '<span class="state">▶</span>');
+  const st = v.status === 'live' ? (v.thumb ? '' : '<span class="state">🔴 방송 중</span>') : v.status === 'processing' ? '<span class="state">⏳ 변환 중…</span>' : v.status === 'failed' ? '<span class="state">⚠ 변환 실패</span>' : (v.thumb ? '' : '<span class="state">▶</span>');
   const pos = ls.get('pos', {})[v.id], prog = pos && v.duration ? `<span class="prog" style="width:${Math.min(100, pos / v.duration * 100).toFixed(0)}%"></span>` : '';
-  const badge = v.pinned && !v.hidden ? '<span class="badge pin">📌 필독</span>' : v.visibility === 'unlisted' ? '<span class="badge">링크로만</span>' : v.hidden ? '<span class="badge">숨김</span>' : v.kind === 'link' ? '<span class="badge yt">🔗 링크</span>' : '';
+  const badge = v.status === 'live' ? '<span class="badge live"><i class="livedot"></i> LIVE</span>' : v.pinned && !v.hidden ? '<span class="badge pin">📌 필독</span>' : v.visibility === 'unlisted' ? '<span class="badge">링크로만</span>' : v.hidden ? '<span class="badge">숨김</span>' : v.kind === 'link' ? '<span class="badge yt">🔗 링크</span>' : '';
   return `<a class="card ${opt.cur ? 'cur' : ''}" href="#/v/${v.id}${opt.list ? '?list=' + opt.list : ''}">${opt.remove ? `<button class="x" data-remove="${v.id}" title="${opt.remove}">✕</button>` : ''}
     <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${v.summary ? `<span class="sumov">${esc(v.summary)}</span>` : ''}${prog}</div>
     <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · ⚡ 핵심 ${dur(v.coreSec)}` : ''}</div>${v.hits && v.hits[0] ? `<div class="hitline"><b>${dur(v.hits[0].s)}</b> “${esc(v.hits[0].t)}”</div>` : ''}</div></a>`;
@@ -39,6 +39,7 @@ async function shelves() {
       ${h.summary || h.desc ? `<p>${esc(h.summary || h.desc)}</p>` : ''}<div class="info">${esc(h.category)} · 조회수 ${h.views}회 · ${ago(h.created)} · ${dur(h.duration)}</div>
       <div class="btns"><a class="btn primary" href="#/v/${h.id}">▶ 재생</a>${h.coreSec ? `<a class="btn" href="#/v/${h.id}?core=1">⚡ 핵심만 보기 (${dur(h.coreSec)})</a>` : ''}<button id="heroLater" class="btn ${later ? 'on' : ''}">${later ? '✓ 담김' : '＋ 나중에 보기'}</button></div></div></section>` : '';
   $('#view').innerHTML = hero + `<div class="chips">${['', ...meta.categories].map((c) => `<button data-cat="${esc(c)}" aria-pressed="${c === ''}">${esc(c) || '전체'}</button>`).join('')}</div>`
+    + shelf('🔴 지금 라이브', videos.filter((v) => v.status === 'live'))
     + (() => { const sh = videos.map(shortOf).filter(Boolean).slice(0, 20); return sh.length ? `<section class="shelf"><h2><a href="#/shorts">⚡ 핵심 쇼츠 <span>넘겨 보기 ›</span></a></h2><div class="rail"><button class="arrow l" title="앞으로">‹</button><div class="rowlist">${sh.map((x) => `<a class="card shcard" href="#/shorts/${x.v.id}"><div class="thumb" ${x.v.thumb ? `style="background-image:url('${thumbUrl(x.v)}')"` : ''}><span class="badge">⚡ ${Math.round(x.e - x.s)}초</span><span class="shtx">${esc(x.t || x.v.title)}</span></div></a>`).join('')}</div><button class="arrow r" title="뒤로">›</button></div></section>` : ''; })()
     + shelf('📌 꼭 보세요', pins) + shelf('이어 보기', ready.filter((v) => pos[v.id])) + shelf('이번 주 인기', pop, 'href="#/popular"') + shelf('새로 올라온 영상', videos.slice(0, 20), 'data-all')
     + meta.categories.map((c) => shelf(c, videos.filter((v) => v.category === c).slice(0, 20), `data-cat="${esc(c)}"`)).join('');
@@ -48,7 +49,7 @@ async function shelves() {
   $$('.rail').forEach((r) => { const list = $('.rowlist', r), upd = () => { $('.arrow.l', r).hidden = list.scrollLeft < 5; $('.arrow.r', r).hidden = list.scrollLeft + list.clientWidth > list.scrollWidth - 5; };
     $('.arrow.l', r).onclick = () => list.scrollBy({ left: -list.clientWidth * 0.8, behavior: 'smooth' }); $('.arrow.r', r).onclick = () => list.scrollBy({ left: list.clientWidth * 0.8, behavior: 'smooth' }); list.onscroll = upd; upd(); });
   if ($('#heroLater')) $('#heroLater').onclick = () => { const l = ls.get('later', []), on = l.includes(h.id); ls.set('later', on ? l.filter((x) => x !== h.id) : [h.id, ...l]); $('#heroLater').classList.toggle('on', !on); $('#heroLater').textContent = on ? '＋ 나중에 보기' : '✓ 담김'; };
-  if (videos.some((v) => v.status === 'processing')) poll = setInterval(() => route(true), 4000);
+  if (videos.some((v) => v.status === 'processing' || v.status === 'live')) poll = setInterval(() => route(true), 6000);
 }
 async function home(kind, tag) {
   if (!kind && !tag && !state.q && !state.cat && !state.all) return shelves();
@@ -303,6 +304,73 @@ function thumbPicker({ v, src, at, hooks }) {
   });
 }
 
+/* ---------- 라이브 보기: 서버가 만드는 2초짜리 조각 목록을 따라가며 재생한다(실제보다 5~10초 늦다) ---------- */
+function livePlayer(V, base, onEnd) {
+  let stop = false; const sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (!window.MediaSource) {   // 아이폰 등: 브라우저가 직접 재생
+    if (V.canPlayType('application/vnd.apple.mpegurl')) { V.src = base + 'live.m3u8'; V.addEventListener('ended', () => { if (!stop) onEnd(); }); V.play().catch(() => { }); }
+    return () => { stop = true; };
+  }
+  const ms = new MediaSource(), queue = [], got = new Set(); let sb = null, init = false, first = true, ended = false; V.src = URL.createObjectURL(ms);
+  const pump = () => { if (!sb || sb.updating || !queue.length || ms.readyState !== 'open') return; try { sb.appendBuffer(queue.shift()); } catch { } };
+  const edge = () => { const b = V.buffered; if (!b.length) return; const end = b.end(b.length - 1), start = b.start(0);
+    if (first || end - V.currentTime > 14 || V.currentTime < start - 0.5) { first = false; V.currentTime = Math.max(start, end - 4); }   // 처음 들어오거나 너무 뒤처지면 지금 방송 위치로
+    if (V.paused && !V.dataset.userPaused) V.play().catch(() => { });
+    if (!sb.updating && V.currentTime - start > 90) try { sb.remove(start, V.currentTime - 45); } catch { } };
+  const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('no'); return r.arrayBuffer(); };
+  ms.addEventListener('sourceopen', async () => { try { sb = ms.addSourceBuffer('video/mp4; codecs="avc1.4d401f, mp4a.40.2"'); } catch { return; } sb.mode = 'segments'; sb.addEventListener('updateend', () => { pump(); edge(); });
+    while (!stop) { try { const r = await fetch(base + 'live.m3u8?_=' + Date.now()); if (r.status === 404 && init) { ended = true; } else if (r.ok) { const txt = await r.text(), segs = txt.split('\n').map((l) => l.trim()).filter((l) => /\.m4s$/.test(l));
+          if (!init && segs.length) { queue.push(await get(base + 'init.mp4')); init = true; segs.slice(0, Math.max(0, segs.length - 3)).forEach((x) => got.add(x)); }   // 늦게 들어오면 최근 것부터
+          for (const x of segs) if (!got.has(x) && !stop) { got.add(x); try { queue.push(await get(base + x)); pump(); } catch { } }
+          if (/#EXT-X-ENDLIST/.test(txt)) ended = true; } } catch { }
+      if (ended) { await sleep2(3000); if (!stop) onEnd(); return; } await sleep2(1500); } }, { once: true });
+  return () => { stop = true; try { if (ms.readyState === 'open') ms.endOfStream(); } catch { } };
+}
+
+/* ---------- 라이브 하기: 폰이나 PC 브라우저에서 카메라(또는 화면)를 바로 방송한다. 설치 없음 ---------- */
+function liveStudio() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alert('이 주소에서는 라이브를 할 수 없어요. 브라우저가 https 주소(또는 localhost)에서만 카메라 사용을 허용해요.');
+  const d = $('#dlg'); d.classList.add('studio', 'lv'); let stream = null, mr = null, id = null, key = null, t0 = 0, timers = [], sending = Promise.resolve(), lastSeq = 0, closed = false, lock = null;
+  const cid = ls.get('cid') || (ls.set('cid', Math.random().toString(36).slice(2, 12)), ls.get('cid'));
+  d.innerHTML = `<div class="st-top"><b class="st-logo">🔴 라이브</b><span id="lvState" class="st-title">방송 준비</span><span class="sp"></span><span id="lvInfo" class="msg"></span><button id="lvClose" class="ghost">닫기</button></div>
+    <div class="st-main"><div class="st-stage"><video id="lvV" playsinline muted autoplay></video></div>
+      <aside class="st-side"><div id="lvSetup" class="lvsetup"><label>방송 제목<input id="lvTitle" maxlength="100" placeholder="예: 3가압장 밸브 교체 현장"></label><label>분류<select id="lvCat">${meta.categories.map((c) => `<option>${esc(c)}</option>`).join('')}</select></label>
+          <label>무엇을 방송할까요<select id="lvSrc"><option value="environment">뒤쪽 카메라 (현장 촬영)</option><option value="user">앞쪽 카메라 (내 얼굴)</option>${navigator.mediaDevices.getDisplayMedia ? '<option value="screen">내 화면</option>' : ''}</select></label>
+          <p id="lvMsg" class="msg"></p><button id="lvGo" class="primary lvgo" disabled>🔴 방송 시작</button><p class="st-help">방송이 끝나면 자동으로 영상으로 저장돼요.<br>보는 사람에게는 5~10초 늦게 보여요.</p></div>
+        <div id="lvChat" class="lvchat" hidden><header><b>💬 채팅</b><span id="lvN" class="meta"></span></header><div id="lvList" class="chlist"></div><form id="lvForm" class="chform"><input id="lvName" maxlength="16" placeholder="이름" value="${esc(ls.get('nick', '') || '진행자')}"><input id="lvText" maxlength="300" placeholder="시청자에게 말하기" autocomplete="off"><button class="primary">보내기</button></form></div></aside></div>
+    <div class="st-bar"><span class="tc"><b id="lvT">0:00</b></span><span id="lvView" class="meta"></span><span class="sp"></span><button id="lvEnd" class="mark" hidden>■ 방송 끝내기</button></div>`;
+  const V = $('#lvV', d), msg = (t, bad) => { $('#lvMsg', d).textContent = t; $('#lvMsg', d).className = 'msg' + (bad ? ' bad' : ''); };
+  const stopStream = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
+  const open = async () => { stopStream(); $('#lvGo', d).disabled = true; const src = $('#lvSrc', d).value;
+    try { if (src === 'screen') { const sc = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true }); let mic = null; try { mic = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { }
+          stream = new MediaStream([...sc.getVideoTracks(), ...((mic || sc).getAudioTracks().slice(0, 1))]); stream._extra = [sc, mic]; }
+        else { try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: src, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: true }); } catch { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: src }, audio: false }); } }
+      V.srcObject = stream; msg(stream.getAudioTracks().length ? '카메라와 마이크가 준비됐어요.' : '마이크 없이 화면만 방송해요.'); $('#lvGo', d).disabled = false; }
+    catch { msg('카메라를 쓸 수 없어요. 브라우저에서 카메라 사용을 허용해 주세요.', true); } };
+  const addChat = (list) => { const el = $('#lvList', d); for (const x of list) { if (x.seq <= lastSeq) continue; lastSeq = x.seq; el.insertAdjacentHTML('beforeend', `<div class="cm"><b>${esc(x.name)}</b><span>${esc(x.text)}</span></div>`); } el.scrollTop = el.scrollHeight; };
+  const finish = async (go) => { if (closed) return; closed = true; timers.forEach(clearInterval); if (mr && mr.state !== 'inactive') { await new Promise((r) => { mr.onstop = r; mr.stop(); }); } await sending.catch(() => { });
+    if (id) await api(`api/live/${id}/end?key=${key}`, { method: 'POST' }).catch(() => { }); stopStream(); if (lock) lock.release().catch(() => { }); V.srcObject = null; d.classList.remove('studio', 'lv'); if (d.open) d.close();
+    if (id && go) { toast('방송을 끝냈어요. 영상으로 저장하고 있어요'); refreshMeta(); location.hash = '#/v/' + id; } };
+  $('#lvSrc', d).onchange = open;
+  $('#lvGo', d).onclick = async () => { const title = $('#lvTitle', d).value.trim(); if (!title) return msg('방송 제목을 적어 주세요.', true); $('#lvGo', d).disabled = true;
+    try { const r = await api('api/live', send('POST', { title, cat: $('#lvCat', d).value, audio: stream.getAudioTracks().length > 0 })); id = r.video.id; key = r.key; } catch (e) { $('#lvGo', d).disabled = false; return msg(e.message, true); }
+    const mime = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
+    mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2500000, audioBitsPerSecond: 96000 }); let fails = 0;
+    mr.ondataavailable = (e) => { if (!e.data.size) return; sending = sending.then(async () => { for (let k = 0; k < 4; k++) { try { const r = await fetch(`api/live/${id}/chunk?key=${key}`, { method: 'PUT', body: e.data }); if (r.ok) { fails = 0; $('#lvInfo', d).textContent = ''; return; } if (r.status === 403 || r.status === 409) break; } catch { } await new Promise((x) => setTimeout(x, 700)); }
+      if (++fails >= 3 && !closed) { $('#lvInfo', d).className = 'msg bad'; $('#lvInfo', d).textContent = '서버로 보내지 못하고 있어요. 통신 상태를 확인해 주세요.'; } }); };
+    mr.start(1000); t0 = Date.now(); $('#lvSetup', d).hidden = true; $('#lvChat', d).hidden = false; $('#lvEnd', d).hidden = false; $('#lvClose', d).hidden = true; $('#lvState', d).innerHTML = `<span class="livedot"></span> 방송 중 · ${esc(title)}`;
+    try { lock = await navigator.wakeLock.request('screen'); } catch { }
+    stream.getVideoTracks()[0].addEventListener('ended', () => finish(true));
+    timers.push(setInterval(() => { $('#lvT', d).textContent = dur((Date.now() - t0) / 1000); }, 500));
+    timers.push(setInterval(async () => { try { const r = await api(`api/videos/${id}/chat?after=${lastSeq}&cid=${cid}`); addChat(r.messages); $('#lvView', d).textContent = `👀 ${Math.max(0, r.watching - 1)}명이 보고 있어요`; } catch { } }, 2500)); };
+  $('#lvForm', d).onsubmit = async (e) => { e.preventDefault(); const text = $('#lvText', d).value.trim(); if (!text || !id) return; $('#lvText', d).value = ''; try { addChat([(await api(`api/videos/${id}/chat`, send('POST', { name: $('#lvName', d).value.trim() || '진행자', text }))).message]); } catch { } };
+  $('#lvEnd', d).onclick = () => { if (confirm('방송을 끝낼까요? 지금까지 방송한 내용은 영상으로 저장돼요.')) finish(true); };
+  $('#lvClose', d).onclick = () => finish(false);
+  d.addEventListener('cancel', (e) => { if (id) e.preventDefault(); });   // 방송 중에는 Esc 로 닫히지 않게
+  d.addEventListener('close', () => finish(!!id), { once: true });
+  if (dlg.open) dlg.close(); d.showModal(); open();
+}
+
 /* ---------- 보기 화면 ---------- */
 function dialog(html) { const d = $('#dlg'); d.innerHTML = html; d.showModal(); $$('[data-close]', d).forEach((b) => b.onclick = () => d.close()); return d; }
 function comments(list) {
@@ -315,12 +383,13 @@ async function watch(id, params) {
   const v = d.video, listId = params.get('list'); let pl = null;
   if (listId) try { pl = (await api('api/playlists/' + listId)).playlist; } catch { }
   const quality = v.low && ls.get('quality', '720') === '360' ? '360' : '720', src = (q) => `media/${v.id}${q === '360' ? '_360' : ''}.mp4?v=${v.thumbVer || 0}`;   // 편집하면 주소가 바뀌어 옛 영상이 남지 않는다
-  const link = v.kind === 'link';
+  const link = v.kind === 'link', isLive = v.status === 'live';
   const L = v.link || {}, t0 = params.get('t') ? Math.floor(+params.get('t')) : 0, frame = (u) => `<iframe id="linkFrame" class="yt" src="${u}" title="${esc(v.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
   const player = link ? (L.type === 'youtube' ? frame(`https://www.youtube-nocookie.com/embed/${L.id}?autoplay=1&rel=0${t0 ? '&start=' + t0 : ''}`) : L.type === 'vimeo' ? frame(`https://player.vimeo.com/video/${L.id}?autoplay=1${t0 ? '#t=' + t0 + 's' : ''}`)
       : L.type === 'file' ? `<video id="linkFrame" class="yt" controls autoplay playsinline src="${esc(L.url)}${t0 ? '#t=' + t0 : ''}"></video>`
       : `<div id="linkFrame" class="yt linkpage"><p>이 주소는 순수TV 화면 안에서 재생할 수 없어요.</p><a class="btn primary" href="${esc(L.url)}" target="_blank" rel="noopener noreferrer">새 창에서 영상 열기 ↗</a></div>`)
     + `<p class="meta ytnote">다른 곳에 있는 영상을 링크로 보여 드려요(복사하지 않아요). 화면이 안 나오면 <a class="tag" href="${esc(L.url)}" target="_blank" rel="noopener noreferrer">원래 주소에서 열기 ↗</a></p>`
+    : isLive ? `<div class="livewrap"><video id="liveV" class="yt" controls playsinline muted autoplay></video><span class="badge live"><i class="livedot"></i> LIVE</span><button id="liveUnmute" class="primary">🔊 소리 켜기</button></div><p class="meta ytnote">지금 방송 중이에요. 실제보다 5~10초 늦게 보여요. 방송이 끝나면 영상으로 저장돼요.</p>`
     : v.status === 'ready' ? `<video id="player" controls autoplay playsinline src="${src(quality)}" ${v.thumb ? `poster="${thumbUrl(v)}"` : ''}>${v.subs ? `<track kind="subtitles" srclang="ko" label="한국어" src="subs/${v.id}.vtt">` : ''}</video>
     <div id="strip" class="strip" title="파란 부분이 핵심 구간이에요" hidden></div>
     <div class="pbar"><button class="small" id="coreBtn" title="핵심 구간만 이어서 보기 (H)" hidden></button><button class="small" id="back10" title="10초 뒤로 (J)">⏪ 10초</button><button class="small" id="fwd10" title="10초 앞으로 (L)">10초 ⏩</button>
@@ -331,7 +400,7 @@ async function watch(id, params) {
   const liked = ls.get('liked', {})[v.id] || 0, later = ls.get('later', []).includes(v.id);
   const plBox = pl ? `<div class="plbox"><header><b>${esc(pl.title)}</b><div class="meta">${pl.videos.findIndex((x) => x.id === v.id) + 1} / ${pl.videos.length}</div></header><div class="items">${pl.videos.map((x) => card(x, { list: pl.id, cur: x.id === v.id })).join('')}</div></div>` : '';
   $('#view').innerHTML = `<div class="watch"><section>${player}
-    <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.kind === 'link' ? ' · 링크 영상' : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
+    <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.kind === 'link' ? ' · 링크 영상' : ''}${isLive ? ' · 🔴 방송 중' : v.wasLive ? ' · 라이브 다시 보기' : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
     <div class="actions"><button id="like" class="${liked === 1 ? 'on' : ''}">👍 <b id="likes">${v.likes}</b></button><button id="dislike" class="${liked === -1 ? 'on' : ''}">👎 <b id="dislikes">${v.dislikes}</b></button>
       <button id="share">↗ 공유</button><button id="later" class="${later ? 'on' : ''}">⏰ ${later ? '담김' : '나중에 보기'}</button><button id="addPl">📚 재생 목록에 담기</button><span class="sp"></span>
       <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">✂ 편집</button><button id="blurBtn" class="ghost">▦ 가리기</button><button id="audioBtn" class="ghost">🔊 소리 정리</button><a id="dlBtn" class="btn ghost" title="통신이 안 되는 곳에 가기 전에 받아 두세요">⬇ 내려받기</a><button id="statBtn" class="ghost">📊 시청 그래프</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
@@ -375,6 +444,13 @@ async function watch(id, params) {
       const map = { ' ': () => (P.paused ? P.play() : P.pause()), k: () => (P.paused ? P.play() : P.pause()), j: () => seek(-10), l: () => seek(10), arrowleft: () => seek(-5), arrowright: () => seek(5), f: full, t: () => $('#theater').click(), m: () => { P.muted = !P.muted; }, h: () => setCore(!coreOn), '<': () => bump(-1), '>': () => bump(1), ',': () => bump(-1), '.': () => bump(1) };
       if (map[k]) { e.preventDefault(); map[k](); } };
     document.addEventListener('keydown', keyHandler);
+  } else if (isLive) {   // 라이브: 방송을 따라가며 재생하고, 끝나면 저장된 영상 화면으로 바꾼다
+    const LV = $('#liveV'), stopLive = livePlayer(LV, `live/${id}/`, () => { toast('방송이 끝났어요'); route(); }); leaveFns.push(stopLive);
+    LV.addEventListener('pause', () => { LV.dataset.userPaused = '1'; }); LV.addEventListener('play', () => { delete LV.dataset.userPaused; });
+    $('#liveUnmute').onclick = () => { LV.muted = false; LV.play().catch(() => { }); $('#liveUnmute').hidden = true; }; LV.addEventListener('volumechange', () => { if (!LV.muted) $('#liveUnmute').hidden = true; });
+    api(`api/videos/${id}/view`, { method: 'POST' }).then((r) => { if ($('#views')) $('#views').textContent = r.views; }).catch(() => { });
+    const chk = setInterval(async () => { const r = await api('api/videos/' + id).catch(() => null); if (r && r.video.status !== 'live') route(); }, 5000); leaveFns.push(() => clearInterval(chk));
+    ['#thumbBtn', '#trimBtn', '#blurBtn', '#audioBtn', '#core', '#dlBtn', '#statBtn'].forEach((q) => { if ($(q)) $(q).hidden = true; }); ls.set('chatOpen', true);
   } else if (link) {   // 링크 영상: 기록과 조회수만 남기고, 우리 영상용 기능(편집·가리기·핵심)은 숨긴다
     ls.set('history', [{ id: v.id, at: Date.now() }, ...ls.get('history', []).filter((h) => h.id !== v.id)].slice(0, 200));
     api(`api/videos/${id}/view`, { method: 'POST' }).then((r) => { if ($('#views')) $('#views').textContent = r.views; }).catch(() => { });
@@ -636,6 +712,8 @@ async function startRec() {
   mr.start(1000); if (dlg.open) dlg.close();
 }
 $('#recBtn').onclick = startRec;
+$('#liveBtn').onclick = liveStudio;
+$('#liveTop').onclick = liveStudio;
 /* ---------- 링크 영상: 다른 곳에 있는 영상을 가져오지 않고 주소만 등록한다 ---------- */
 $('#lnkUrl').onchange = async () => { const u = $('#lnkUrl').value.trim(); if (!/youtu\.?be/.test(u) || $('#lnkTitle').value.trim()) return;   // 유튜브면 제목을 받아 본다(안 되면 직접 적는다)
   try { const r = await fetch('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(u)); if (r.ok) { const j = await r.json(); if (j.title && !$('#lnkTitle').value.trim()) $('#lnkTitle').value = j.title; } } catch { } };

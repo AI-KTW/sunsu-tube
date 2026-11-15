@@ -7,6 +7,7 @@ const { createConfig } = require('./config.cjs');
 const { createStore } = require('./store.cjs');
 const { createTranscoder, cleanRanges, cleanBoxes } = require('./transcode.cjs');
 const { createInsight } = require('./insight.cjs');
+const { createLive } = require('./live.cjs');
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8' };
@@ -83,6 +84,8 @@ function createSunsuTvApp(overrides = {}) {
   const { db } = store;
 
   // 서버가 꺼졌다 켜지면: 변환 중이던 영상을 다시 줄 세우고, 하루 넘은 올리다 만 파일을 치운다.
+  const live = createLive(config, store, transcoder, overrides.log || console.log);
+  live.recover();
   for (const v of db.videos.filter((x) => x.status === 'processing')) {
     if (v.incoming && fs.existsSync(v.incoming)) transcoder.enqueue(v.id, v.incoming);
     else if (fs.existsSync(store.paths.media(v.id))) v.status = 'ready';
@@ -94,7 +97,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', pinned: !!v.pinned, customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', ...(v.liveStarted ? { liveStarted: v.liveStarted } : {}), wasLive: !!v.wasLive, pinned: !!v.pinned, customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -206,6 +209,7 @@ function createSunsuTvApp(overrides = {}) {
   }
 
   function removeVideo(v) {
+    live.drop(v.id);
     db.videos.splice(db.videos.indexOf(v), 1);
     for (let i = db.comments.length - 1; i >= 0; i--) if (db.comments[i].video === v.id) db.comments.splice(i, 1);
     delete db.chat[v.id]; present.delete(v.id);
@@ -374,6 +378,20 @@ function createSunsuTvApp(overrides = {}) {
     if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
     if (pathname === '/api/videos' && m === 'GET') return sendJson(res, 200, { ok: true, videos: list(url) });
     if (pathname === '/api/upload' && (m === 'PUT' || m === 'POST')) return uploadWhole(req, res, url);
+    // 라이브: 시작(POST /api/live) → 조각(PUT /api/live/:id/chunk) → 끝(POST /api/live/:id/end). 열쇠(key)를 가진 방송 화면만 보낼 수 있다
+    if (pathname === '/api/live' && m === 'POST') {
+      if (!transcoder.available) throw err(400, 'ffmpeg 가 없어 라이브를 할 수 없어요.');
+      const b = await readJson(req), v = newVideo(store.newId(), { ...b, keep: null, clean: null }, 0, null);
+      if (!v.title) throw err(400, '방송 제목을 적어 주세요.');
+      delete v.incoming; delete v.originalBytes; Object.assign(v, { kind: 'live', status: 'live', liveKey: crypto.randomBytes(12).toString('hex'), liveStarted: new Date().toISOString(), duration: 0, bytes: 0 });
+      db.videos.push(v); store.save(); live.start(v, b.audio !== false);
+      return sendJson(res, 200, { ok: true, video: publicVideo(v), key: v.liveKey });
+    }
+    const lm = new RegExp(`^/api/live/(${ID})/(chunk|end)$`).exec(pathname);
+    if (lm) { const v = store.video(lm[1]); if (!v || v.status !== 'live' || !v.liveKey || url.searchParams.get('key') !== v.liveKey) return fail(res, 403, '방송 중이 아니거나 권한이 없어요.');
+      if (lm[2] === 'chunk' && m === 'PUT') { const okW = await live.write(v, await readBody(req, 32 * 1024 * 1024)); return okW ? sendJson(res, 200, { ok: true }) : fail(res, 409, '방송이 이미 끝났어요.'); }
+      if (lm[2] === 'end' && m === 'POST') { await live.end(v); return sendJson(res, 200, { ok: true, video: publicVideo(v) }); }
+      return fail(res, 405, '지원하지 않는 요청입니다.'); }
     if (pathname === '/api/links' && m === 'POST') {   // 링크 영상: 영상을 가져오지 않고 주소만 등록한다
       const b = await readJson(req), link = parseLink(b.url);
       if (!link) throw err(400, '영상 주소를 넣어 주세요. (http:// 또는 https:// 로 시작하는 주소)');
@@ -422,6 +440,8 @@ function createSunsuTvApp(overrides = {}) {
         if (await sendFile(req, res, m[2] ? store.paths.mediaLow(m[1]) : store.paths.media(m[1]), 'video/mp4', 'private, max-age=3600', extra)) return; return fail(res, 404, '영상 파일이 없어요.'); }
       m = new RegExp(`^/thumb/(${ID})\\.jpg$`).exec(pathname);
       if (m) { if (await sendFile(req, res, store.paths.thumb(m[1]), 'image/jpeg', 'private, max-age=86400')) return; return fail(res, 404, '썸네일이 없어요.'); }
+      m = new RegExp(`^/live/(${ID})/(live\\.m3u8|init\\.mp4|seg\\d{5}\\.m4s)$`).exec(pathname);   // 라이브 조각
+      if (m) { if (await sendFile(req, res, path.join(live.dirOf(m[1]), m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp4', m[2].endsWith('.m3u8') ? 'no-store' : 'private, max-age=600')) return; return fail(res, 404, '방송 조각이 없어요.'); }
       m = new RegExp(`^/subs/(${ID})\\.vtt$`).exec(pathname);
       if (m) { const d = insight.read(m[1]); if (!d || !d.transcript || !d.transcript.length) return fail(res, 404, '자막이 없어요.');
         const body = insight.toVtt(d.transcript); res.writeHead(200, { 'Content-Type': TYPES['.vtt'], 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-cache' }); return res.end(body); }
@@ -434,7 +454,7 @@ function createSunsuTvApp(overrides = {}) {
     }
   });
   server.on('close', () => store.flush());
-  return { config, server, store, transcoder, insight };
+  return { config, server, store, transcoder, insight, live };
 }
 
 module.exports = { createSunsuTvApp };
