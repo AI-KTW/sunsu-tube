@@ -645,6 +645,8 @@ async function admin() {
       ${meta.stt ? '<div class="row" style="justify-content:flex-start;margin-top:8px"><button id="insAll" class="small">핵심이 없는 영상 모두 만들기</button></div>' : '<p class="meta">서버에서 tools/install_stt.sh 를 한 번 실행하면 켜져요. 꺼져 있어도 자막 파일을 올리거나 직접 고를 수 있어요.</p>'}${meta.llm ? '' : '<p class="meta">AI 는 서버 환경변수 SUNSUTV_LLM_URL 에 주소를 넣으면 켜져요.</p>'}</div>
     <div class="box"><h2>분류</h2><div id="cats">${meta.categories.map((c) => `<div class="catrow"><input value="${esc(c)}" data-old="${esc(c)}" maxlength="20"><button class="small" data-catdel>지우기</button></div>`).join('')}</div>
       <div class="row" style="justify-content:flex-start"><button id="catAdd" class="small">＋ 분류 추가</button><button id="catSave" class="small primary">분류 저장</button><span class="meta">이름을 바꾸면 영상도 따라 바뀌고, 지운 분류의 영상은 맨 아래 분류로 가요.</span></div></div>
+    <div class="box" id="bkBox"><h2>🛟 기록 백업</h2><p class="meta">영상 정보, 댓글, 재생 목록, 출석 명단 같은 기록을 하루에 한 번 자동으로 따로 남겨요(최근 14일). 기록 파일이 깨지면 가장 최근 백업으로 알아서 되살려요. 영상 파일 자체는 커서 백업하지 않아요.</p>
+      <div id="bkList" class="meta">불러오는 중…</div><div class="row" style="justify-content:flex-start;margin-top:10px"><button id="bkNow" class="small">지금 백업하기</button><a class="btn small" href="api/admin/backup" download>⬇ 지금 기록 내려받기</a></div></div>
     <div class="box" id="wmBox"><h2>🏷 로고 넣기</h2><p class="meta">켜 두면 새로 올리는 영상의 구석에 로고(또는 "대외비" 같은 글자)가 자동으로 들어가요. 이미 올린 영상은 영상 화면의 도구 메뉴에서 넣을 수 있어요. 한번 넣으면 영상에서 뺄 수 없어요.</p>
       <div class="wmrow"><div class="wmprev">${meta.watermark.has ? `<img src="watermark.png?v=${meta.watermark.ver}" alt="지금 로고">` : '<span class="meta">아직 없음</span>'}</div>
         <div class="wmopt"><div class="row" style="justify-content:flex-start"><label class="filebtn"><input id="wmFile" type="file" accept="image/png,image/jpeg,image/webp" hidden>로고 그림 올리기</label><span class="meta">또는</span><input id="wmText" maxlength="20" placeholder="글자 (예: 대외비)" style="width:160px"><button id="wmMake" class="small">글자로 만들기</button></div>
@@ -665,6 +667,10 @@ async function admin() {
     box.innerHTML = `<h2>겹치는 영상 ${groups.length}묶음</h2><p class="meta">같은 원본으로 보이는 영상이에요. 먼저 올린 것만 남기면 ${mb(groups.reduce((n, g) => n + g.slice(1).reduce((m, v) => m + v.bytes, 0), 0))} 를 아껴요.</p>`
       + groups.map((g, i) => `<div class="duprow">${g.map((v, k) => `<a href="#/v/${v.id}">${k ? '' : '<b>먼저 올림</b> '}${esc(v.title)} <span class="meta">${ago(v.created)} · ${mb(v.bytes)} · 조회 ${v.views}</span></a>`).join('')}<button class="small" data-dup="${i}">나중 것 ${g.length - 1}개 지우기</button></div>`).join('');
     $$('[data-dup]').forEach((b) => b.onclick = async () => { const g = groups[+b.dataset.dup]; if (!confirm(`먼저 올린 '${g[0].title}' 만 남기고 나머지 ${g.length - 1}개를 지울까요? 되돌릴 수 없어요.`)) return; await api('api/admin/delete', send('POST', { ids: g.slice(1).map((v) => v.id) })); admin(); }); }).catch(() => { });
+  const bkDraw = (r) => { if (!$('#bkList')) return; $('#bkList').innerHTML = (r.restoredFrom ? `<p class="msg bad">기록 파일이 깨져 있어 ${esc(r.restoredFrom)} 백업으로 되살렸어요. 그 뒤의 변경은 빠져 있을 수 있어요.</p>` : '')
+    + (r.backups.length ? `최근 백업 <b>${esc(r.backups[0].date)}</b> · 모두 ${r.backups.length}개 보관 중 <span class="bkchips">${r.backups.slice(0, 14).map((b) => `<a class="tag" href="api/admin/backup?name=${b.name}" download title="${(b.bytes / 1024).toFixed(0)} KB">${b.date.slice(5)}</a>`).join('')}</span>` : '아직 백업이 없어요. 내일부터 하루에 한 번 자동으로 남아요.'); };
+  api('api/admin/backups').then(bkDraw).catch(() => { });
+  $('#bkNow').onclick = async () => { try { bkDraw(await api('api/admin/backups', { method: 'POST' })); toast('지금 상태를 백업했어요'); } catch (e) { alert(e.message); } };
   $('#wmPos').value = meta.watermark.pos;
   const wmPut = async (blob, type) => { try { await api(`api/watermark?pos=${$('#wmPos').value}&opacity=${$('#wmOp').value}&on=${$('#wmOn').checked || !meta.watermark.has ? 1 : 0}`, { method: 'PUT', headers: { 'Content-Type': type }, body: blob }); toast('로고를 바꿨어요'); admin(); } catch (e) { alert(e.message); } };
   $('#wmFile').onchange = (e) => { const f = e.target.files[0]; if (f) wmPut(f, f.type || 'image/png'); };
@@ -684,17 +690,61 @@ async function admin() {
     try { await api('api/categories', send('PUT', { categories: rows.map((i) => i.value.trim()).filter(Boolean), rename })); toast('분류를 저장했어요'); admin(); } catch (e) { alert(e.message); } };
 }
 
+/* ---------- 도움말: 처음 쓰는 사람을 위한 짧은 안내 ---------- */
+function help() {
+  const sec = (id, icon, title, items) => `<section class="hsec" id="h-${id}"><h2>${icon} ${title}</h2>${items.map(([q, a]) => `<details><summary>${q}</summary><div>${a}</div></details>`).join('')}</section>`;
+  $('#view').innerHTML = `<div class="help"><h1 class="page">❔ 도움말</h1><p class="sub">순수TV 를 처음 쓰는 분을 위한 안내예요. 궁금한 줄을 누르면 설명이 펼쳐져요.</p>
+    <nav class="hnav"><a href="#/help" data-h="watch">영상 보기</a><a href="#/help" data-h="upload">영상 올리기</a><a href="#/help" data-h="edit">다듬기</a><a href="#/help" data-h="live">라이브·출석</a><a href="#/help" data-h="admin">관리</a><a href="#/help" data-h="faq">자주 묻는 것</a></nav>`
+    + sec('watch', '▶', '영상 보기', [
+      ['영상을 찾으려면?', '위쪽 검색창에 찾는 말을 적으세요. 제목뿐 아니라 <b>영상에서 한 말</b>로도 찾아져요. 홈에서는 분류 버튼으로 골라 볼 수 있어요.'],
+      ['긴 영상을 빨리 보고 싶어요', '영상 아래 <b>핵심만 보기</b>를 누르면 중요한 부분만 이어서 보여 줘요. 오른쪽 <b>핵심 내용</b>에서 문장을 누르면 그 장면으로 바로 가요. 재생 속도도 바꿀 수 있어요.'],
+      ['쇼츠가 뭔가요?', '긴 영상에서 가장 중요한 구간 하나를 30초 안쪽으로 보여 주는 거예요. 위아래 화살표나 마우스 휠로 넘기고, 마음에 들면 <b>전체 영상 보기</b>를 누르세요.'],
+      ['나중에 다시 보고 싶어요', '<b>나중에 보기</b>를 누르면 "나중에 볼 영상"에 담겨요. 보던 영상은 다음에 열면 보던 곳부터 이어져요. 여러 영상을 묶으려면 <b>재생 목록에 담기</b>를 쓰세요.'],
+      ['통신이 안 되는 현장에서 보려면?', '사무실에서 미리 <b>내려받기</b>를 눌러 폰이나 노트북에 받아 두세요.'],
+      ['궁금한 게 있어요', '댓글에 질문을 적으면 AI 가 영상 내용에서 답을 찾아 답글을 달아 줘요(답이 영상에 없으면 달지 않아요). 지금 같이 보는 사람과는 오른쪽 <b>실시간 채팅</b>으로 이야기할 수 있어요.'],
+      ['단축키가 있나요?', '스페이스: 재생·멈춤 / ←→: 5초 이동 / J, L: 10초 이동 / F: 전체 화면 / T: 극장 모드 / M: 소리 끄기 / H: 핵심만 보기 / &lt; &gt;: 속도'] ])
+    + sec('upload', '＋', '영상 올리기', [
+      ['영상을 올리려면?', '오른쪽 위 <b>영상 올리기</b>를 누르고 파일을 고르세요. 여러 개를 한꺼번에 올릴 수 있고, 올리다 끊겨도 같은 파일을 다시 고르면 이어서 올라가요.'],
+      ['필요한 부분만 올리고 싶어요', '올리기 창에서 파일 옆 <b>편집</b>을 누르면 남길 구간을 고를 수 있어요. 고르지 않은 부분과 원본은 서버에 저장되지 않아요.'],
+      ['내 화면을 녹화해서 올리려면?', '올리기 창의 <b>화면 녹화해서 올리기</b>를 누르세요. 프로그램 설치 없이 내 화면과 목소리가 녹화돼요.'],
+      ['다른 사이트의 영상을 소개하려면?', '올리기 창 아래에 영상 주소를 붙여 넣고 <b>링크 영상 추가</b>를 누르세요. 영상을 복사하지 않고 주소만 걸어요. 남의 영상을 내려받아 올리면 안 돼요.'],
+      ['"같은 영상이 이미 있어요"라고 나와요', '같은 파일이 이미 올라와 있다는 뜻이에요. 꼭 필요할 때만 "그래도 올리기"를 고르세요.'],
+      ['썸네일은 어떻게 만들어지나요?', '올리면 자동으로 만들어지고, AI 가 켜져 있으면 눈에 띄는 문구도 얹어 줘요. 바꾸려면 영상 화면의 <b>썸네일</b>을 누르세요.'] ])
+    + sec('edit', '✂', '올린 영상 다듬기', [
+      ['필요 없는 부분을 빼려면?', '영상 화면의 <b>편집</b>을 누르고, 남길 곳의 시작에서 "여기부터", 끝에서 "여기까지"를 누르세요. 여러 구간을 고를 수 있어요.'],
+      ['얼굴이나 번호판을 가리려면?', '<b>가리기</b>를 누르고 화면 위에서 마우스로 끌어 네모를 그리세요. 그 부분이 모자이크돼요. 가릴 시간도 정할 수 있어요.'],
+      ['소리가 작거나 잡음이 많아요', '<b>소리 정리</b>를 누르면 잡음을 줄이고 크기를 맞춰 줘요.'],
+      ['영상 여러 개를 하나로 만들려면?', '<b>합치기</b>를 누르고 뒤에 붙일 영상을 순서대로 고르세요.'],
+      ['AI 가 고른 핵심이 틀렸어요', '오른쪽 핵심 내용 아래 <b>고치기</b>로 직접 고칠 수 있어요. 고친 내용은 AI 가 덮어쓰지 않아요.'],
+      ['되돌릴 수 있나요?', '편집, 가리기, 소리 정리, 로고 넣기는 <b>되돌릴 수 없어요</b>. 원본은 따로 보관해 두세요.'] ])
+    + sec('live', '🔴', '라이브와 출석', [
+      ['라이브 방송을 하려면?', '오른쪽 위 <b>라이브</b>를 누르고 제목과 카메라를 고른 뒤 "방송 시작"을 누르세요. 끝내면 자동으로 영상으로 저장돼요. 보는 사람에게는 5~10초 늦게 보여요.'],
+      ['라이브 버튼을 눌러도 안 돼요', '브라우저는 <b>https 주소</b>에서만 카메라를 쓰게 해요. 주소가 http 로 시작하면 방송할 수 없어요(보는 것은 돼요). 폰은 사내망에 연결돼 있어야 해요.'],
+      ['교육 출석을 받으려면?', '영상 화면의 <b>출석 받기</b>를 누르면 보는 사람에게 출석 칸이 생겨요. 명단은 같은 버튼으로 보고, 엑셀용 파일로 받을 수 있어요.'] ])
+    + sec('admin', '⚙', '관리하는 분께', [
+      ['꼭 봐야 하는 영상을 알리려면?', '관리 화면에서 <b>필독</b>을 누르면 홈 맨 위에 고정돼요.'],
+      ['디스크가 부족해요', '관리 화면에서 "용량 큰 순"으로 정렬해 필요 없는 영상을 지우고, <b>겹치는 영상</b> 묶음에서 나중 것을 지우세요.'],
+      ['기록이 날아가면 어떻게 하나요?', '기록(영상 정보, 댓글, 출석 명단)은 하루에 한 번 자동으로 백업돼요. 관리 화면의 <b>기록 백업</b>에서 확인하고 내려받을 수 있어요. 영상 파일 자체는 백업하지 않아요.'],
+      ['모든 영상에 "대외비"를 넣고 싶어요', '관리 화면의 <b>로고 넣기</b>에서 글자나 그림을 정하고 켜 두세요. 그 뒤에 올리는 영상에 자동으로 들어가요.'] ])
+    + sec('faq', '❔', '자주 묻는 것', [
+      ['로그인이 없나요?', '아직 없어요. 그래서 시청 기록, 나중에 볼 영상, 좋아요 표시는 <b>지금 쓰는 브라우저에만</b> 기억돼요. 다른 컴퓨터에서는 보이지 않아요.'],
+      ['핵심 내용이 안 나와요', '말소리가 없는 영상이거나, 서버에 음성 인식·AI 가 꺼져 있을 때예요. 관리 화면의 "핵심 뽑기"에서 켜져 있는지 볼 수 있어요.'],
+      ['집이나 현장에서도 되나요?', '순수TV 는 사내망 안에 있어서, 사내망에 연결된 기기에서만 열려요.'] ]) + '</div>';
+  $$('.hnav a').forEach((a) => a.onclick = (e) => { e.preventDefault(); const el = $('#h-' + a.dataset.h); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  window.scrollTo(0, 0);
+}
+
 /* ---------- 길 찾기 ---------- */
 function route(soft) {
   if (!soft) leaveFns.splice(0).forEach((f) => f());
   clearInterval(poll); poll = null; clearTimeout(nextTimer); if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
   const [pathPart, query] = (location.hash.slice(1) || '/').split('?'), params = new URLSearchParams(query || ''), seg = pathPart.split('/').filter(Boolean);
   if (seg[0] !== 'v') document.body.classList.remove('theater');
-  const nav = { undefined: 'home', shorts: 'shorts', popular: 'popular', playlists: 'playlists', pl: 'playlists', history: 'history', later: 'later', admin: 'admin' }[seg[0]];
+  const nav = { undefined: 'home', shorts: 'shorts', popular: 'popular', playlists: 'playlists', pl: 'playlists', history: 'history', later: 'later', admin: 'admin', help: 'help' }[seg[0]];
   $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === nav)); document.body.classList.remove('shownav');
   const go = seg[0] === 'v' && /^[0-9a-f]{12}$/.test(seg[1] || '') ? (soft ? Promise.resolve() : watch(seg[1], params)) : seg[0] === 'shorts' ? (soft ? Promise.resolve() : shorts(seg[1])) : seg[0] === 'popular' ? home('popular') : seg[0] === 'tag' && seg[1] ? home('', decodeURIComponent(seg[1]))
     : seg[0] === 'playlists' ? playlistsPage() : seg[0] === 'pl' && seg[1] ? playlistPage(seg[1]) : seg[0] === 'history' ? localList('history', '🕘 시청 기록', '영상을 보면 여기에 쌓여요.')
-    : seg[0] === 'later' ? localList('later', '⏰ 나중에 볼 영상', '영상 보기 화면에서 "나중에 보기"를 누르세요.') : seg[0] === 'admin' ? admin() : home();
+    : seg[0] === 'later' ? localList('later', '⏰ 나중에 볼 영상', '영상 보기 화면에서 "나중에 보기"를 누르세요.') : seg[0] === 'help' ? Promise.resolve(help()) : seg[0] === 'admin' ? admin() : home();
   go.catch((e) => { $('#view').innerHTML = `<div class="empty"><b>${esc(e.message)}</b><a href="#/">처음으로</a></div>`; });
 }
 window.addEventListener('hashchange', () => route());

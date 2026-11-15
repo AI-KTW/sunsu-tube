@@ -587,3 +587,37 @@ test('로고 넣기: 켜 두면 새 영상에 자동으로, 이미 올린 영상
     assert.equal((await s.waitReady(off.body.video.id)).marked, false);
   } finally { await s.stop(); }
 });
+
+/* ---------- 자동 백업 ---------- */
+test('자동 백업: 하루 한 벌 남기고, 기록 파일이 깨지면 백업으로 되살린다', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunsutv-bk-'));
+  const open = async () => { const app = createSunsuTvApp({ dataDir, port: 0, log: () => { }, sttCmd: null }); await new Promise((r) => app.server.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${app.server.address().port}`;
+    return { app, base, j: async (p, o) => { const r = await fetch(base + p, o); return { status: r.status, body: await r.json() }; }, stop: () => new Promise((r) => app.server.close(r)) }; };
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const day = new Date().toISOString().slice(0, 10), bfile = path.join(dataDir, 'backup', `sunsutv-${day}.json`);
+  let s = await open();
+  try {
+    await s.j('/api/links', J({ url: 'https://youtu.be/dQw4w9WgXcQ', title: '첫 영상' })); s.app.store.flush();
+    assert.ok(!fs.existsSync(bfile), '기록 파일이 처음 생길 때는 백업할 것이 없다');
+    await s.j('/api/links', J({ url: 'https://youtu.be/dQw4w9WgXcQ', title: '둘째 영상' })); s.app.store.flush();
+    assert.equal(JSON.parse(fs.readFileSync(bfile, 'utf8')).videos.length, 1, '그날 첫 저장 전의 상태를 남긴다');
+    await s.j('/api/links', J({ url: 'https://youtu.be/dQw4w9WgXcQ', title: '셋째 영상' })); s.app.store.flush();
+    assert.equal(JSON.parse(fs.readFileSync(bfile, 'utf8')).videos.length, 1, '하루에 한 벌만');
+    // 지금 백업하기 → 최신 상태로
+    const b = await s.j('/api/admin/backups', { method: 'POST' }); assert.equal(b.body.backups[0].name, `sunsutv-${day}.json`); assert.equal(b.body.backups[0].date, day);
+    assert.equal(JSON.parse(fs.readFileSync(bfile, 'utf8')).videos.length, 3);
+    const dl = await fetch(`${s.base}/api/admin/backup?name=sunsutv-${day}.json`); assert.equal(dl.status, 200); assert.match(dl.headers.get('content-disposition'), /attachment/); assert.equal((await dl.json()).videos.length, 3);
+    assert.equal((await fetch(`${s.base}/api/admin/backup?name=../sunsutv.json`)).status, 404); assert.equal((await fetch(`${s.base}/api/admin/backup`)).status, 200);
+    // 오래된 백업은 14개만 남긴다
+    for (let i = 1; i <= 20; i++) fs.writeFileSync(path.join(dataDir, 'backup', `sunsutv-2020-01-${String(i).padStart(2, '0')}.json`), '{}');
+    await s.j('/api/admin/backups', { method: 'POST' }); await new Promise((r) => setTimeout(r, 100));
+    assert.equal(fs.readdirSync(path.join(dataDir, 'backup')).length, 14);
+  } finally { await s.stop(); }
+  // 기록 파일이 깨짐 → 다시 켜면 백업으로 되살아난다
+  fs.writeFileSync(path.join(dataDir, 'sunsutv.json'), '{"videos":[{"id":"깨진');
+  s = await open();
+  try {
+    assert.equal((await s.j('/api/videos')).body.videos.length, 3, '백업에서 되살림'); assert.equal((await s.j('/api/admin/backups')).body.restoredFrom, `sunsutv-${day}.json`);
+    assert.ok(fs.readdirSync(dataDir).some((f) => f.startsWith('sunsutv.json.broken-')), '깨진 파일은 따로 남긴다');
+  } finally { await s.stop(); }
+});
