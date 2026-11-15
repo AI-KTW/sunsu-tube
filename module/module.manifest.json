@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "sunsutube",
+  "name": "순수튜브",
+  "description": "365일 현장 기술 영상 — 직원이 올리고 찾아 보는 사내 영상 플랫폼",
+  "version": "0.1.0",
+  "type": "application",
+  "entry": "web/index.html",
+  "server": {
+    "command": "node",
+    "args": ["server/index.cjs"],
+    "defaultPort": 4396,
+    "portEnv": "SUNSUTUBE_PORT",
+    "health": "/api/health"
+  },
+  "presentation": { "icon": "video", "color": "#0ea5e9", "order": 38 },
+  "capabilities": ["sunsutube.upload", "sunsutube.watch"],
+  "permissions": ["local-data.read", "local-data.write"],
+  "dataScope": "sunsutube"
+}

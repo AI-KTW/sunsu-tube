@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>순수튜브</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="#/"><span class="mark">▶</span> 순수튜브 <small>365일 현장 기술 영상</small></a>
+  <form id="searchForm" class="search"><input id="q" placeholder="영상 찾기 (제목, 설명, 태그, 올린 사람)" autocomplete="off"><button title="찾기">🔍</button></form>
+  <button id="uploadBtn" class="primary">＋ 영상 올리기</button>
+  <button id="nameBtn" class="ghost" title="내 이름 바꾸기">👤 <span id="me">이름 없음</span></button>
+</header>
+<main id="view"></main>
+<footer class="foot"><span id="disk"></span></footer>
+
+<dialog id="uploadDlg">
+  <form id="uploadForm" method="dialog">
+    <h2>영상 올리기</h2>
+    <label class="drop" id="drop"><input id="file" type="file" accept="video/*,.mkv,.avi,.mov,.3gp" hidden><b>영상 파일 고르기</b><span id="fileName">또는 여기에 끌어다 놓으세요</span></label>
+    <label>제목 <input id="upTitle" maxlength="100" required placeholder="예: 3가압장 제수밸브 교체 순서"></label>
+    <label>분류 <select id="upCat"></select></label>
+    <label>설명 <textarea id="upDesc" rows="3" maxlength="2000" placeholder="무슨 작업인지, 주의할 점"></textarea></label>
+    <label>태그 <input id="upTags" placeholder="쉼표로 구분: 제수밸브, 150A, 누수"></label>
+    <div class="progress" hidden><div id="bar"></div></div>
+    <p id="upMsg" class="msg"></p>
+    <div class="row"><button type="button" id="upCancel" class="ghost">닫기</button><button type="submit" id="upGo" class="primary">올리기</button></div>
+    <p class="hint">얼굴·차량 번호·보안 시설이 찍힌 영상은 사내에서만 보여요. 올리면 자동으로 720p 로 줄여 저장해요.</p>
+  </form>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>
