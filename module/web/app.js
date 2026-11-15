@@ -98,6 +98,47 @@ async function playlistPage(id) {
   $('#plDel').onclick = async () => { if (confirm(`'${p.title}' 재생 목록을 지울까요? 영상은 지워지지 않아요.`)) { await api('api/playlists/' + id, { method: 'DELETE' }); location.hash = '#/playlists'; } };
 }
 
+/* ---------- 편집: 필요한 부분만 남기기. 남길 구간을 여러 개 고르면 그 부분만 이어 붙인다(나머지는 저장하지 않는다) ---------- */
+const tf = (t) => { const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
+function rangeEditor({ src, title, points, initial }) {
+  return new Promise((resolve) => {
+    const d = $('#dlg'); d.classList.add('wide');
+    d.innerHTML = `<h2>✂ 필요한 부분만 남기기</h2><p class="meta">${esc(title || '')}${title ? ' · ' : ''}영상을 보면서 남길 곳의 시작에서 "여기부터", 끝에서 "여기까지"를 누르세요. 여러 번 고를 수 있어요.</p>
+      <video id="edV" controls playsinline preload="metadata" src="${src}"></video><div id="edStrip" class="strip" title="파란 부분이 남는 구간"></div>
+      <div class="row" style="justify-content:flex-start;margin-top:10px"><button id="edIn" class="primary">▶ 여기부터</button><button id="edOut" class="primary">여기까지 ■</button><span id="edPend" class="meta"></span><span class="sp"></span>
+        ${points && points.length ? '<button id="edCore" class="small">⚡ 핵심 구간으로 채우기</button>' : ''}<button id="edClear" class="small">모두 지우기</button></div>
+      <div id="edList"></div><p id="edMsg" class="msg"></p>
+      <div class="row"><button id="edPrev">남길 부분만 미리 보기</button><span class="sp"></span><button id="edCancel" class="ghost">취소</button><button id="edOk" class="primary" disabled>이대로 남기기</button></div>`;
+    const V = $('#edV', d); let ranges = (initial || []).map((r) => ({ s: r.s, e: r.e })), pend = null, preview = false, settled = false;
+    const total = () => (Number.isFinite(V.duration) ? V.duration : 0);
+    const norm = () => { const out = []; for (const r of ranges.filter((x) => x.e > x.s + 0.3).sort((a, b) => a.s - b.s)) { const q = out[out.length - 1]; if (q && r.s <= q.e) q.e = Math.max(q.e, r.e); else out.push(r); } ranges = out; };
+    const draw = () => { norm(); const T = total(), keep = ranges.reduce((n, r) => n + r.e - r.s, 0), pc = (t) => (T ? t / T * 100 : 0);
+      $('#edStrip', d).innerHTML = ranges.map((r) => `<b style="left:${pc(r.s)}%;width:${pc(r.e - r.s)}%"></b>`).join('') + (pend != null ? `<u style="left:${pc(pend)}%"></u>` : '') + '<i id="edPos"></i>';
+      $('#edList', d).innerHTML = ranges.map((r, i) => `<div class="edrow"><b>${i + 1}</b><span>${tf(r.s)} ~ ${tf(r.e)}</span><span class="meta">${dur(r.e - r.s)}</span><span class="sp"></span><button class="small" data-go="${i}">보기</button><button class="small" data-del="${i}" title="이 구간 빼기">✕</button></div>`).join('');
+      $('#edMsg', d).className = 'msg'; $('#edMsg', d).textContent = ranges.length ? `남는 길이 ${dur(keep)} / 전체 ${dur(T)} · 고르지 않은 ${dur(Math.max(0, T - keep))} 는 저장하지 않아요.` : '아직 고른 구간이 없어요.';
+      $('#edPend', d).textContent = pend != null ? `시작 ${tf(pend)} 을 잡았어요. 끝나는 곳에서 "여기까지"를 누르세요.` : '';
+      $('#edOk', d).disabled = !ranges.length; $('#edPrev', d).disabled = !ranges.length; $('#edPrev', d).classList.toggle('on', preview);
+      $$('[data-go]', d).forEach((b) => b.onclick = () => { preview = false; V.currentTime = ranges[+b.dataset.go].s; V.play().catch(() => { }); draw(); });
+      $$('[data-del]', d).forEach((b) => b.onclick = () => { ranges.splice(+b.dataset.del, 1); if (!ranges.length) preview = false; draw(); }); };
+    const warn = (t) => { $('#edMsg', d).className = 'msg bad'; $('#edMsg', d).textContent = t; };
+    const finish = (val) => { if (settled) return; settled = true; V.pause(); V.removeAttribute('src'); V.load(); d.classList.remove('wide'); if (d.open) d.close(); resolve(val); };
+    $('#edIn', d).onclick = () => { pend = V.currentTime; draw(); };
+    $('#edOut', d).onclick = () => { if (pend == null) return warn('먼저 시작하는 곳에서 "여기부터"를 눌러 주세요.'); if (V.currentTime <= pend + 0.3) return warn('끝이 시작보다 뒤여야 해요. 영상을 더 뒤로 옮긴 뒤 누르세요.'); ranges.push({ s: pend, e: V.currentTime }); pend = null; draw(); };
+    if ($('#edCore', d)) $('#edCore', d).onclick = () => { ranges = points.map((x) => ({ s: x.s, e: x.e })); pend = null; draw(); };
+    $('#edClear', d).onclick = () => { ranges = []; pend = null; preview = false; draw(); };
+    $('#edPrev', d).onclick = () => { preview = !preview; if (preview) { V.currentTime = ranges[0].s; V.play().catch(() => { }); } draw(); };
+    $('#edStrip', d).onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); V.currentTime = (e.clientX - r.left) / r.width * total(); };
+    V.addEventListener('timeupdate', () => { const t = V.currentTime, pos = $('#edPos', d); if (pos) pos.style.left = (total() ? t / total() * 100 : 0) + '%';
+      if (!preview || V.seeking || ranges.some((r) => t >= r.s - 0.05 && t < r.e)) return; const nx = ranges.find((r) => r.s > t); if (nx) V.currentTime = nx.s; else { V.pause(); preview = false; draw(); } });
+    V.addEventListener('loadedmetadata', draw);
+    V.addEventListener('error', () => { warn('이 파일은 여기서 미리 볼 수 없어요. 그대로 올린 뒤 영상 화면의 "편집"에서 골라 주세요.'); $('#edIn', d).disabled = $('#edOut', d).disabled = true; });
+    $('#edCancel', d).onclick = () => finish(null);
+    $('#edOk', d).onclick = () => { norm(); finish(ranges.map((r) => ({ s: +r.s.toFixed(2), e: +r.e.toFixed(2) }))); };
+    d.addEventListener('close', () => finish(null), { once: true });
+    d.showModal(); draw();
+  });
+}
+
 /* ---------- 보기 화면 ---------- */
 function dialog(html) { const d = $('#dlg'); d.innerHTML = html; d.showModal(); $$('[data-close]', d).forEach((b) => b.onclick = () => d.close()); return d; }
 function comments(list) {
@@ -123,7 +164,7 @@ async function watch(id, params) {
     <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
     <div class="actions"><button id="like" class="${liked === 1 ? 'on' : ''}">👍 <b id="likes">${v.likes}</b></button><button id="dislike" class="${liked === -1 ? 'on' : ''}">👎 <b id="dislikes">${v.dislikes}</b></button>
       <button id="share">↗ 공유</button><button id="later" class="${later ? 'on' : ''}">⏰ ${later ? '담김' : '나중에 보기'}</button><button id="addPl">📚 재생 목록에 담기</button><span class="sp"></span>
-      <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">자르기</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
+      <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">✂ 편집</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
     ${v.note && v.status === 'ready' ? `<p class="msg bad">${esc(v.note)}</p>` : ''}
     ${v.desc || v.tags.length ? `<div class="desc">${esc(v.desc)}${v.tags.length ? (v.desc ? '\n' : '') + v.tags.map((t) => `<a class="tag" href="#/tag/${encodeURIComponent(t)}">#${esc(t)}</a>`).join('') : ''}</div>` : ''}
     <div class="comments"><h2>댓글 ${d.comments.length}개</h2>
@@ -244,12 +285,10 @@ async function watch(id, params) {
     const done = () => { dg.close(); toast('썸네일을 바꿨어요'); route(); };
     $('#thNow', dg).onclick = async () => { try { await api(`api/videos/${id}/thumb`, send('POST', { t })); done(); } catch (e) { $('#thMsg', dg).textContent = e.message; } };
     $('#thFile', dg).onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { await api(`api/videos/${id}/thumb`, { method: 'PUT', headers: { 'Content-Type': f.type || 'image/jpeg' }, body: f }); done(); } catch (er) { $('#thMsg', dg).textContent = er.message; } }; };
-  $('#trimBtn').onclick = () => { if (!P) return toast('영상 변환이 끝난 뒤에 자를 수 있어요');
-    const dg = dialog(`<h2>앞뒤 잘라내기</h2><p class="meta">남길 구간의 시작과 끝을 정하세요. 영상을 원하는 곳에 두고 "지금 위치"를 누르면 돼요. 잘라낸 부분은 되돌릴 수 없어요.</p>
-      <div class="row" style="justify-content:flex-start"><label style="margin:0">시작(초) <input id="tS" type="number" min="0" step="0.1" value="0" style="width:110px"></label><button id="tSNow" class="small">지금 위치</button>
-      <label style="margin:0">끝(초) <input id="tE" type="number" min="0" step="0.1" value="${(v.duration || 0).toFixed(1)}" style="width:110px"></label><button id="tENow" class="small">지금 위치</button></div><p id="tMsg" class="msg bad"></p><div class="row"><button data-close class="ghost">취소</button><button id="tGo" class="primary">잘라내기</button></div>`);
-    $('#tSNow', dg).onclick = () => { $('#tS', dg).value = P.currentTime.toFixed(1); }; $('#tENow', dg).onclick = () => { $('#tE', dg).value = P.currentTime.toFixed(1); };
-    $('#tGo', dg).onclick = async () => { try { await api(`api/videos/${id}/trim`, send('POST', { start: +$('#tS', dg).value, end: +$('#tE', dg).value })); const pos = ls.get('pos', {}); delete pos[v.id]; ls.set('pos', pos); dg.close(); route(); } catch (e) { $('#tMsg', dg).textContent = e.message; } }; };
+  $('#trimBtn').onclick = async () => { if (!P) return toast('영상 변환이 끝난 뒤에 편집할 수 있어요'); P.pause();
+    const keep = await rangeEditor({ src: src('720'), title: v.title, points: ins.points }); if (!keep) return;
+    if (!confirm(`고른 ${keep.length}개 구간만 남기고 나머지는 지워요. 되돌릴 수 없어요. 계속할까요?`)) return;
+    try { await api(`api/videos/${id}/cut`, send('POST', { keep })); const pos = ls.get('pos', {}); delete pos[v.id]; ls.set('pos', pos); route(); } catch (e) { alert(e.message); } };
   $('#report').onclick = async () => { const r = prompt('신고 이유를 적어 주세요 (관리 화면에 전달돼요)'); if (!r) return; try { await api(`api/videos/${id}/report`, send('POST', { reason: r })); toast('신고했어요'); } catch (e) { alert(e.message); } };
   $('#del').onclick = async () => { if (!confirm(`'${v.title}' 영상을 지울까요? 되돌릴 수 없어요.`)) return; await api('api/videos/' + id, { method: 'DELETE' }); refreshMeta(); location.hash = '#/'; };
   $('#cform').onsubmit = async (e) => { e.preventDefault(); const text = $('#ctext').value.trim(); if (!text) return; const body = { text }; if ($('#cat').checked && P) body.at = Math.floor(P.currentTime);
@@ -320,8 +359,10 @@ async function refreshMeta() {
 /* ---------- 올리기: 여러 개, 조각으로 나눠 끊겨도 이어서 ---------- */
 const CHUNK = 8 * 1024 * 1024, dlg = $('#uploadDlg'); let files = [], uploading = false, cancelled = false, lastUploaded = null;
 const fkey = (f) => `${f.name}|${f.size}|${f.lastModified}`;
-function renderUp() { $('#upList').innerHTML = files.map((f, i) => `<div class="uprow" data-i="${i}"><input class="t" maxlength="100" value="${esc(f.title)}" placeholder="제목" ${uploading ? 'disabled' : ''}><span class="st ${f.cls || ''}">${f.st || mb(f.file.size)}</span><div class="bar"><div style="width:${f.pct || 0}%"></div></div></div>`).join('');
-  $$('#upList .t').forEach((inp, i) => inp.oninput = () => { files[i].title = inp.value; }); }
+function renderUp() { $('#upList').innerHTML = files.map((f, i) => `<div class="uprow" data-i="${i}"><input class="t" maxlength="100" value="${esc(f.title)}" placeholder="제목" ${uploading ? 'disabled' : ''}><button type="button" class="small ${f.keep ? 'on' : ''}" data-edit="${i}" ${uploading || f.cls === 'ok' ? 'disabled' : ''} title="필요한 부분만 골라 올리기">✂ ${f.keep ? `${f.keep.length}개 구간 · ${dur(f.keep.reduce((n, r) => n + r.e - r.s, 0))}` : '편집'}</button><span class="st ${f.cls || ''}">${f.st || mb(f.file.size)}</span><div class="bar"><div style="width:${f.pct || 0}%"></div></div></div>`).join('');
+  $$('#upList .t').forEach((inp, i) => inp.oninput = () => { files[i].title = inp.value; });
+  $$('#upList [data-edit]').forEach((b) => b.onclick = async () => { const f = files[+b.dataset.edit], url = URL.createObjectURL(f.file);
+    const keep = await rangeEditor({ src: url, title: f.title, initial: f.keep }); URL.revokeObjectURL(url); if (keep) { f.keep = keep; renderUp(); } }); }
 function addFiles(list) { for (const file of list) { if (files.some((f) => fkey(f.file) === fkey(file))) continue; files.push({ file, title: file.name.replace(/\.[^.]+$/, '') }); } renderUp(); }
 function setRow(i, st, pct, cls) { Object.assign(files[i], { st, pct, cls }); const row = $(`#upList [data-i="${i}"]`); if (!row) return; $('.st', row).textContent = st; $('.st', row).className = 'st ' + (cls || ''); $('.bar div', row).style.width = pct + '%'; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -330,7 +371,7 @@ async function uploadOne(i, common) {
   if (meta.maxBytes && f.size > meta.maxBytes) throw new Error(`너무 커요 (최대 ${gb(meta.maxBytes)})`);
   let uid = saved[key], received = 0;
   if (uid) try { received = (await api('api/uploads/' + uid)).received; setRow(i, `이어서 올리는 중 ${(received / f.size * 100).toFixed(0)}%`, received / f.size * 100); } catch { uid = null; }
-  if (!uid) { uid = (await api('api/uploads', send('POST', { filename: f.name, size: f.size, title: files[i].title.trim() || f.name, ...common }))).uploadId; saved[key] = uid; ls.set('uploads', saved); }
+  if (!uid) { uid = (await api('api/uploads', send('POST', { filename: f.name, size: f.size, title: files[i].title.trim() || f.name, keep: files[i].keep, ...common }))).uploadId; saved[key] = uid; ls.set('uploads', saved); }
   let tries = 0;
   while (received < f.size) {
     if (cancelled) throw new Error('취소함 (다시 고르면 이어서 올라가요)');

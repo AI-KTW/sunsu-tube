@@ -296,3 +296,40 @@ test('AI 가 없으면 대본만 만든다. 말소리가 없으면 그렇게 알
     ins = await waitInsight(s2, await putVideo(s2)); assert.equal(ins.status, 'nospeech');
   } finally { await s.stop(); await s2.stop(); }
 });
+
+/* ---------- 필요한 부분만 남기기 ---------- */
+const { cleanRanges } = require('../server/transcode.cjs');
+test('남길 구간 다듬기', () => {
+  assert.deepEqual(cleanRanges([{ s: 5, e: 8 }, { s: 1, e: 3 }, { s: 2.5, e: 4 }, { s: 9, e: 9.1 }, { s: 'a', e: 2 }, { s: 20, e: 99 }], 30), [[1, 4], [5, 8], [20, 30]]);
+  assert.deepEqual(cleanRanges(null), []);
+});
+test('올린 영상에서 고른 구간만 남기고, 올릴 때 고른 구간만 저장한다(원본은 지운다)', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    // 1) 올린 뒤 편집: 0~1초, 2~3초만 남김 → 약 2초
+    const id = await putVideo(s);
+    assert.equal((await s.j(`/api/videos/${id}/cut`, J({ keep: [] }))).status, 400);
+    assert.equal((await s.j(`/api/videos/${id}/cut`, J({ keep: [{ s: 2, e: 3 }, { s: 0, e: 1 }] }))).body.video.status, 'processing');
+    let v = await s.waitReady(id);
+    assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4, '길이 ' + v.duration); assert.equal(v.low, true);
+    const streams = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(s.dataDir, 'media', id + '.mp4')], { encoding: 'utf8' }).stdout;
+    assert.match(streams, /video/); assert.match(streams, /audio/);
+    assert.deepEqual(fs.readdirSync(path.join(s.dataDir, 'incoming')), [], '원본·임시 파일이 남지 않는다');
+    // 2) 올릴 때 구간을 골라 올림(이어 올리기)
+    const buf = fs.readFileSync(sample(s.dataDir, 'b.mp4'));
+    const init = await s.j('/api/uploads', J({ filename: 'b.mp4', size: buf.length, title: '골라 올림', keep: [{ s: 0.5, e: 1.5 }, { s: 1.2, e: 2 }, { s: 50, e: 60 }] }));
+    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: buf });
+    assert.equal(done.body.done, true);
+    v = await s.waitReady(done.body.video.id);
+    assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.2 && v.duration < 1.9, '길이 ' + v.duration);
+    assert.equal(s.app.store.video(v.id).keep, undefined);
+    // 3) 소리 없는 영상도 편집된다
+    const mute = path.join(s.dataDir, 'mute.mp4');
+    spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=3:size=320x240:rate=15', '-c:v', 'libx264', mute]);
+    const up = await s.j('/api/upload?' + new URLSearchParams({ filename: 'mute.mp4', title: '소리 없음' }), { method: 'PUT', body: fs.readFileSync(mute) });
+    await s.waitReady(up.body.video.id);
+    await s.j(`/api/videos/${up.body.video.id}/cut`, J({ keep: [{ s: 0, e: 1 }, { s: 2, e: 3 }] }));
+    v = await s.waitReady(up.body.video.id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4);
+  } finally { await s.stop(); }
+});
