@@ -122,7 +122,7 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
     fs.renameSync(cur, tmp);
     const r = await encode(v, tmp, opt);
     if (!r.ok) { fs.renameSync(tmp, cur); Object.assign(v, { status: 'ready', note: '편집하지 못했어요: ' + r.err }); return; }
-    if (!v.customThumb) await makeThumb(v.id, Math.min(3, r.duration * 0.1));
+    if (!v.customThumb) { await makeThumb(v.id, Math.min(3, r.duration * 0.1)); delete v.autoThumb; }   // 자동 썸네일은 새 영상 기준으로 다시 만든다
     Object.assign(v, { status: 'ready', duration: r.duration, bytes: r.bytes, low: r.low, thumbVer: Date.now(), note: '' });
     try { fs.unlinkSync(tmp); } catch { }
   }

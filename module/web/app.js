@@ -233,11 +233,21 @@ function drawThumb(cv, frame, o) {
   g.textAlign = 'center'; g.textBaseline = 'top'; g.lineJoin = 'round'; g.lineWidth = sz * 0.16; g.strokeStyle = 'rgba(2,10,18,.9)'; g.fillStyle = { white: '#ffffff', yellow: '#fde047', sky: '#7dd3fc' }[o.color] || '#fff';
   lines.forEach((l, i) => { g.strokeText(l, W / 2, y0 + i * lh); g.fillText(l, W / 2, y0 + i * lh); });
 }
-function thumbPicker({ v, src, at }) {
+const paintFit = (canvas, img, iw, ih) => { const g = canvas.getContext('2d'), k = Math.min(canvas.width / iw, canvas.height / ih), w = iw * k, h = ih * k; g.fillStyle = '#04121d'; g.fillRect(0, 0, canvas.width, canvas.height); g.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h); };
+function composeThumb(src, t, o) {
+  return new Promise((resolve) => { const tv = document.createElement('video'), cv = document.createElement('canvas'), frame = document.createElement('canvas'); cv.width = frame.width = 1280; cv.height = frame.height = 720; tv.muted = true; tv.preload = 'auto';
+    const end = (b) => { clearTimeout(to); tv.removeAttribute('src'); tv.load(); resolve(b); }, to = setTimeout(() => end(null), 15000);
+    tv.addEventListener('error', () => end(null));
+    tv.addEventListener('loadeddata', () => { tv.addEventListener('seeked', () => { try { paintFit(frame, tv, tv.videoWidth || 16, tv.videoHeight || 9); drawThumb(cv, frame, o); cv.toBlob((b) => end(b), 'image/jpeg', 0.92); } catch { end(null); } }, { once: true });
+      tv.currentTime = Math.max(0, Math.min((tv.duration || 1) - 0.1, t)); }, { once: true });
+    tv.src = src; });
+}
+function thumbPicker({ v, src, at, hooks }) {
   return new Promise((resolve) => {
     const d = $('#dlg'); d.classList.add('wide');
     d.innerHTML = `<h2>썸네일 만들기</h2><div class="thgrid"><canvas id="thCv" width="1280" height="720"></canvas>
-        <div class="thopt"><label class="pick"><input type="checkbox" id="thOn" checked> 제목 글자 얹기</label><label>글자 <textarea id="thText" rows="2" maxlength="60">${esc(v.title)}</textarea></label>
+        <div class="thopt"><label class="pick"><input type="checkbox" id="thOn" checked> 제목 글자 얹기</label><label>글자 <textarea id="thText" rows="2" maxlength="60">${esc((hooks && hooks[0]) || v.title)}</textarea></label>
+          <div id="thHooks" class="thhooks"></div>
           <label>위치 <select id="thPos"><option value="bottom">아래</option><option value="mid">가운데</option><option value="top">위</option></select></label>
           <label>글자 색 <select id="thColor"><option value="white">흰색</option><option value="yellow">노란색</option><option value="sky">하늘색</option></select></label></div></div>
       <div class="row" style="justify-content:flex-start;margin:12px 0 6px"><b>장면 고르기</b><span class="meta">마음에 드는 장면을 누르세요.</span><span class="sp"></span><label class="filebtn"><input id="thFile" type="file" accept="image/*" hidden>내 사진 쓰기</label></div>
@@ -247,7 +257,10 @@ function thumbPicker({ v, src, at }) {
     const tv = document.createElement('video'); tv.muted = true; tv.preload = 'auto'; tv.src = src;
     const opt = () => ({ on: $('#thOn', d).checked, text: $('#thText', d).value, pos: $('#thPos', d).value, color: $('#thColor', d).value });
     const redraw = () => { if (has) drawThumb(cv, frame, opt()); $('#thSave', d).disabled = !has; };
-    const paint = (canvas, img, iw, ih) => { const g = canvas.getContext('2d'), k = Math.min(canvas.width / iw, canvas.height / ih), w = iw * k, h = ih * k; g.fillStyle = '#04121d'; g.fillRect(0, 0, canvas.width, canvas.height); g.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h); };
+    const paint = paintFit; let hk = hooks || [];
+    const drawHooks = () => { $('#thHooks', d).innerHTML = (hk.length ? '<b>✨ AI 추천 문구</b>' : '') + [...hk, v.title].map((h, i) => `<button class="small" data-h="${esc(h)}">${i === hk.length ? '제목 그대로' : esc(h)}</button>`).join('') + (meta.llm ? '<button class="small ghost" id="thMore">✨ 문구 새로 만들기</button>' : '');
+      $$('#thHooks [data-h]', d).forEach((b) => b.onclick = () => { $('#thText', d).value = b.dataset.h; redraw(); });
+      if ($('#thMore', d)) $('#thMore', d).onclick = async (e) => { e.target.disabled = true; e.target.textContent = '만드는 중…'; try { hk = (await api(`api/videos/${v.id}/hooks`, send('POST'))).hooks; if (hk[0]) { $('#thText', d).value = hk[0]; redraw(); } } catch (er) { $('#thMsg', d).textContent = er.message; } drawHooks(); }; };
     const grab = (t, canvas) => (chain = chain.then(() => new Promise((ok) => { if (settled) return ok(); const done = () => { clearTimeout(to); try { paint(canvas, tv, tv.videoWidth || 16, tv.videoHeight || 9); } catch { } ok(); }, to = setTimeout(done, 6000);
       tv.addEventListener('seeked', done, { once: true }); tv.currentTime = Math.max(0, Math.min((tv.duration || v.duration || 1) - 0.1, t)); })));
     const pick = async (t, el) => { $$('.thc', d).forEach((x) => x.classList.toggle('on', x === el)); await grab(t, frame); has = true; redraw(); };
@@ -259,6 +272,7 @@ function thumbPicker({ v, src, at }) {
     tv.addEventListener('error', () => { $('#thMsg', d).textContent = '영상에서 장면을 가져오지 못했어요. "내 사진 쓰기"로 사진을 올릴 수 있어요.'; });
     ['#thOn', '#thText', '#thPos', '#thColor'].forEach((q) => { $(q, d).oninput = redraw; });
     $('#thFile', d).onchange = (e) => { const f = e.target.files[0]; if (!f) return; const img = new Image(), url = URL.createObjectURL(f); img.onload = () => { paint(frame, img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(url); has = true; $$('.thc', d).forEach((x) => x.classList.remove('on')); redraw(); }; img.onerror = () => { $('#thMsg', d).textContent = '사진을 읽지 못했어요. JPG 나 PNG 로 올려 주세요.'; }; img.src = url; };
+    drawHooks();
     $('#thCancel', d).onclick = () => finish(false);
     $('#thSave', d).onclick = () => cv.toBlob(async (blob) => { try { await api(`api/videos/${v.id}/thumb`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob }); finish(true); } catch (e) { $('#thMsg', d).textContent = e.message; } }, 'image/jpeg', 0.92);
     d.addEventListener('close', () => finish(false), { once: true }); d.showModal();
@@ -393,8 +407,11 @@ async function watch(id, params) {
   }
   function watchInsight() { if (!P || !['queued', 'working'].includes(ins.status)) return; clearInterval(poll);
     poll = setInterval(async () => { const r = await api(`api/videos/${id}/insight`).catch(() => null); if (!r) return; const done = !['queued', 'working'].includes(r.insight.status);
-      if (done) { clearInterval(poll); poll = null; if (r.insight.points.length) toast('핵심을 뽑았어요'); } if (!editing && (done || r.insight.status !== ins.status)) { ins = r.insight; renderCore(); } }, 3000); }
-  renderCore(); watchInsight();
+      if (done) { clearInterval(poll); poll = null; if (r.insight.points.length) toast('핵심을 뽑았어요'); } if (!editing && (done || r.insight.status !== ins.status)) { ins = r.insight; renderCore(); if (done) autoThumb(); } }, 3000); }
+  async function autoThumb() { if (!P || link || v.customThumb || v.autoThumb || !(ins.hooks || []).length) return; v.autoThumb = true;
+    const t = ins.points[0] ? Math.min(ins.points[0].s + 1, ins.points[0].e) : (v.duration || 0) * 0.1, blob = await composeThumb(src(v.low ? '360' : '720'), t, { on: true, text: ins.hooks[0], pos: 'bottom', color: 'white' }); if (!blob) return;
+    try { const r = await api(`api/videos/${id}/thumb?auto=1`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob }); if (!r.skipped) { v.thumbVer = r.video.thumbVer; toast('AI 가 썸네일을 만들었어요'); } } catch { } }
+  renderCore(); watchInsight(); autoThumb();
   if (P && params.get('core') === '1' && ins.points.length) P.addEventListener('loadedmetadata', () => { P.currentTime = ins.points[0].s; setCore(true); }, { once: true });
 
   const vote = async (kind) => { const map = ls.get('liked', {}), cur = map[v.id] || 0, want = kind === 'like' ? 1 : -1; let r;
@@ -417,7 +434,7 @@ async function watch(id, params) {
       <label>공개 범위 <select id="eVis"><option value="public">공개 (목록과 검색에 보임)</option><option value="unlisted" ${v.visibility === 'unlisted' ? 'selected' : ''}>링크로만 (목록에 숨김)</option></select></label><p id="eMsg" class="msg bad"></p><div class="row"><button data-close class="ghost">취소</button><button id="eSave" class="primary">저장</button></div>`);
     $('#eSave', dg).onclick = async () => { try { await api('api/videos/' + id, send('PATCH', { title: $('#eTitle', dg).value, category: $('#eCat', dg).value, desc: $('#eDesc', dg).value, tags: $('#eTags', dg).value, visibility: $('#eVis', dg).value })); dg.close(); route(); } catch (e) { $('#eMsg', dg).textContent = e.message; } }; };
   $('#thumbBtn').onclick = async () => { if (!P) return toast('영상 변환이 끝난 뒤에 바꿀 수 있어요'); P.pause();
-    if (await thumbPicker({ v, src: src(v.low ? '360' : '720'), at: P.currentTime })) { toast('썸네일을 바꿨어요'); route(); } };
+    if (await thumbPicker({ v, src: src(v.low ? '360' : '720'), at: P.currentTime, hooks: ins.hooks })) { toast('썸네일을 바꿨어요'); route(); } };
   $('#trimBtn').onclick = async () => { if (!P) return toast('영상 변환이 끝난 뒤에 편집할 수 있어요'); P.pause();
     const keep = await rangeEditor({ src: src('720'), title: v.title, points: ins.points }); if (!keep) return;
     if (!confirm(`고른 ${keep.length}개 구간만 남기고 나머지는 지워요. 되돌릴 수 없어요. 계속할까요?`)) return;
