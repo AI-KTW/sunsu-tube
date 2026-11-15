@@ -41,3 +41,13 @@ table.adm{width:100%;border-collapse:collapse}table.adm th,table.adm td{padding:
 .pick{display:flex;gap:8px;align-items:center;padding:6px 0}.pick input{width:auto}
 #toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%);background:#e6edf7;color:#111;padding:8px 16px;border-radius:20px;z-index:20;font-weight:600}
 .foot{position:fixed;left:0;right:0;bottom:0;padding:5px 16px;background:rgba(13,20,32,.97);border-top:1px solid var(--line);color:var(--muted);font-size:12px;z-index:6}.foot .warn{color:#fbbf24}
+.corebox{border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}.corebox:empty{display:none}
+.corebox header{display:flex;gap:6px;align-items:center;padding:10px 12px;background:var(--panel)}.corebox header b{flex:1}
+.corebox .body{padding:10px 8px;max-height:420px;overflow:auto;position:relative}.corebox .body>p,.corebox .body>label{margin:0 4px 8px;display:block}.corebox .sum{color:var(--text);line-height:1.6}
+.corebox footer{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}.corebox footer:empty{display:none}.corebox footer .sp{flex:1}
+.pt,.ln{display:block;padding:6px 8px;border-radius:8px;cursor:pointer;border-left:3px solid transparent}.pt:hover,.ln:hover{background:var(--panel)}.pt.cur,.ln.cur{background:var(--panel);border-left-color:var(--accent)}
+.pt .at,.ln .at{color:var(--accent2);margin-right:8px;font-variant-numeric:tabular-nums}.ln{padding:3px 8px;color:var(--muted);font-size:13px}.ln.core{color:var(--text)}.ln[hidden]{display:none}
+.filebtn{display:inline-block;border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:12.5px;cursor:pointer;background:#1f2c44}.filebtn:hover{border-color:var(--accent)}
+.strip{position:relative;height:8px;background:#0f1828;border-radius:4px;margin-top:6px;cursor:pointer;overflow:hidden}.strip[hidden]{display:none}.strip b{position:absolute;top:0;bottom:0;background:var(--accent)}.strip i{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+.ptrow{display:grid;grid-template-columns:1fr auto 1fr auto auto;gap:4px;align-items:center;margin:0 4px 4px}.ptrow .ptx{grid-column:1/6;margin-bottom:8px}.ptrow input{padding:4px 6px}
+#coreBtn.on{background:var(--accent);border-color:var(--accent);color:#fff}

@@ -5,9 +5,10 @@ const path = require('node:path');
 const { createConfig } = require('./config.cjs');
 const { createStore } = require('./store.cjs');
 const { createTranscoder } = require('./transcode.cjs');
+const { createInsight } = require('./insight.cjs');
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.mp4': 'video/mp4' };
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8' };
 const ID = '[0-9a-f]{12}';
 
 function sendJson(res, status, body) {
@@ -58,7 +59,9 @@ async function sendFile(req, res, file, type, cache = 'no-cache') {
 function createSunsuTubeApp(overrides = {}) {
   const config = createConfig(overrides);
   const store = createStore(config.dataDir, { categories: config.categories });
-  const transcoder = createTranscoder(config, store, overrides.log || console.log);
+  const insight = createInsight(config, store, overrides.log || console.log);
+  // 변환이 끝나면 핵심을 뽑는다. 잘라낸 영상은 시간이 달라지므로 처음부터 다시.
+  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') insight.reset(v); insight.enqueue(v.id); });
   const { db } = store;
 
   // 서버가 꺼졌다 켜지면: 변환 중이던 영상을 다시 줄 세우고, 하루 넘은 올리다 만 파일을 치운다.
@@ -67,12 +70,14 @@ function createSunsuTubeApp(overrides = {}) {
     else if (fs.existsSync(store.paths.media(v.id))) v.status = 'ready';
     else Object.assign(v, { status: 'failed', note: '서버가 다시 켜지면서 원본을 잃었어요. 다시 올려 주세요.' });
   }
+  for (const v of db.videos.filter((x) => x.status === 'ready' && (x.insight === 'queued' || x.insight === 'working'))) insight.enqueue(v.id);
   db.uploads = db.uploads.filter((u) => { if (Date.now() - new Date(u.created) < 24 * 3600 * 1000 && fs.existsSync(u.file)) return true; fs.unlink(u.file, () => { }); return false; });
 
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length });
+    low: !!v.low, visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '' });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
   function list(url) {
@@ -81,7 +86,7 @@ function createSunsuTubeApp(overrides = {}) {
     let out = db.videos.filter((v) => (all || listed(v)) && (!cat || v.category === cat) && (!tag || (v.tags || []).includes(tag)));
     if (q) {
       const words = q.split(/\s+/).filter(Boolean);
-      out = out.filter((v) => { const text = [v.title, v.desc, v.category, ...(v.tags || [])].join(' ').toLowerCase(); return words.every((w) => text.includes(w)); });
+      out = out.filter((v) => { const text = [v.title, v.desc, v.category, v.summary || '', ...(v.tags || [])].join(' ').toLowerCase() + ' ' + insight.textOf(v.id); /* 말한 내용으로도 찾는다 */ return words.every((w) => text.includes(w)); });
     }
     const by = { views: (a, b) => (b.views || 0) - (a.views || 0), likes: (a, b) => (b.likes || 0) - (a.likes || 0), week: (a, b) => weekViews(b) - weekViews(a) || (b.views || 0) - (a.views || 0),
       size: (a, b) => (b.bytes || 0) - (a.bytes || 0), reports: (a, b) => (b.reports || []).length - (a.reports || []).length }[sort] || ((a, b) => b.created.localeCompare(a.created));
@@ -176,6 +181,7 @@ function createSunsuTubeApp(overrides = {}) {
     for (let i = db.comments.length - 1; i >= 0; i--) if (db.comments[i].video === v.id) db.comments.splice(i, 1);
     for (const p of db.playlists) p.videos = p.videos.filter((x) => x !== v.id);
     for (const f of [store.paths.media(v.id), store.paths.mediaLow(v.id), store.paths.thumb(v.id), v.incoming]) if (f) fs.unlink(f, () => { });
+    insight.remove(v.id);
   }
 
   const publicPlaylist = (p, full) => {
@@ -209,6 +215,8 @@ function createSunsuTubeApp(overrides = {}) {
     return fail(res, 405, '지원하지 않는 요청입니다.');
   }
 
+  const insightOf = (v) => { const d = insight.read(v.id) || {}; return { status: v.insight || 'none', note: v.insightNote || '', summary: d.summary || '', points: d.points || [], transcript: d.transcript || [], edited: !!d.edited }; };
+
   async function videoApi(req, res, vm) {
     const m = req.method, v = store.video(vm[1]);
     if (!v) return fail(res, 404, '영상을 찾지 못했어요.');
@@ -217,7 +225,7 @@ function createSunsuTubeApp(overrides = {}) {
       if (m === 'GET') {
         const related = db.videos.filter((x) => x.id !== v.id && x.status === 'ready' && listed(x)).map((x) => ({ x, score: (x.category === v.category ? 2 : 0) + (x.tags || []).filter((t) => (v.tags || []).includes(t)).length }))
           .sort((a, b) => b.score - a.score || b.x.created.localeCompare(a.x.created)).slice(0, 10).map((r) => publicVideo(r.x));
-        return sendJson(res, 200, { ok: true, video: publicVideo(v), comments: store.commentsOf(v.id), related, playlists: db.playlists.filter((p) => p.videos.includes(v.id)).map((p) => p.id) });
+        return sendJson(res, 200, { ok: true, video: publicVideo(v), comments: store.commentsOf(v.id), related, insight: insightOf(v), playlists: db.playlists.filter((p) => p.videos.includes(v.id)).map((p) => p.id) });
       }
       if (m === 'PATCH') {
         const b = await readJson(req);
@@ -256,6 +264,23 @@ function createSunsuTubeApp(overrides = {}) {
       if (!(s >= 0) || !(e > s + 0.5) || e > (v.duration || 0) + 0.5) throw err(400, '시작과 끝을 영상 길이 안에서, 끝이 시작보다 뒤가 되게 골라 주세요.');
       v.status = 'processing'; store.save(); transcoder.enqueueTrim(v.id, s, Math.min(e, v.duration)); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
     }
+    if (sub === 'insight') {
+      if (v.status !== 'ready') throw err(400, '영상 변환이 끝난 뒤에 할 수 있어요.');
+      if (m === 'GET') return sendJson(res, 200, { ok: true, insight: insightOf(v) });
+      if (m === 'PUT') { insight.edit(v, await readJson(req)); return sendJson(res, 200, { ok: true, insight: insightOf(v), video: publicVideo(v) }); }   // 사람이 고침
+      if (m === 'POST') {   // (다시) 만들기
+        const b = await readJson(req), has = (insight.read(v.id) || {}).transcript;
+        if (!(has && has.length) && !await insight.sttReady) throw err(400, '음성 인식이 설치되지 않았어요. 자막 파일(.srt, .vtt)을 올리거나 핵심 구간을 직접 골라 주세요.');
+        if (has && has.length && !insight.llmOn && !b.stt) throw err(400, 'AI 가 연결되지 않아 핵심을 고를 수 없어요. 직접 골라 주세요.');
+        insight.enqueue(v.id, { force: true, stt: !!b.stt }); return sendJson(res, 200, { ok: true, insight: insightOf(v) });
+      }
+    }
+    if (sub === 'subs' && m === 'PUT') {   // 자막 파일을 올려 대본으로 쓴다
+      if (v.status !== 'ready') throw err(400, '영상 변환이 끝난 뒤에 할 수 있어요.');
+      if (!insight.setSubs(v, (await readBody(req, 4 * 1024 * 1024)).toString('utf8'))) throw err(400, '자막을 읽지 못했어요. .srt 나 .vtt 파일을 올려 주세요.');
+      if (insight.llmOn) insight.enqueue(v.id);
+      return sendJson(res, 200, { ok: true, insight: insightOf(v) });
+    }
     if (sub === 'comments') {
       if (m === 'POST' && !cid) {
         const b = await readJson(req), text = cleanText(b.text, 1000); if (!text) throw err(400, '댓글 내용을 적어 주세요.');
@@ -274,7 +299,7 @@ function createSunsuTubeApp(overrides = {}) {
   async function api(req, res, pathname, url) {
     const m = req.method;
     if (pathname === '/api/health') return sendJson(res, 200, { ok: true, module: 'sunsutube', videos: db.videos.length });
-    if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, ...(await diskInfo()) });
+    if (pathname === '/api/meta' && m === 'GET') return sendJson(res, 200, { ok: true, categories: db.categories, maxBytes: config.maxBytes, exts: config.videoExts, stt: await insight.sttReady, llm: insight.llmOn, ...(await diskInfo()) });
     if (pathname === '/api/videos' && m === 'GET') return sendJson(res, 200, { ok: true, videos: list(url) });
     if (pathname === '/api/upload' && (m === 'PUT' || m === 'POST')) return uploadWhole(req, res, url);
     if (pathname.startsWith('/api/uploads')) return uploads(req, res, pathname, url);
@@ -291,7 +316,13 @@ function createSunsuTubeApp(overrides = {}) {
       for (const id of Array.isArray(b.ids) ? b.ids : []) { const v = store.video(id); if (v) { removeVideo(v); n++; } }
       store.save(); return sendJson(res, 200, { ok: true, deleted: n });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    if (pathname === '/api/admin/insight' && m === 'POST') {   // 핵심이 없는 영상을 모두 줄 세운다
+      if (!await insight.sttReady) throw err(400, '음성 인식이 설치되지 않았어요.');
+      const todo = db.videos.filter((v) => v.status === 'ready' && ['none', 'failed', undefined].includes(v.insight));
+      for (const v of todo) insight.enqueue(v.id);
+      return sendJson(res, 200, { ok: true, queued: todo.length });
+    }
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }
@@ -305,6 +336,9 @@ function createSunsuTubeApp(overrides = {}) {
       if (m) { if (await sendFile(req, res, m[2] ? store.paths.mediaLow(m[1]) : store.paths.media(m[1]), 'video/mp4', 'private, max-age=3600')) return; return fail(res, 404, '영상 파일이 없어요.'); }
       m = new RegExp(`^/thumb/(${ID})\\.jpg$`).exec(pathname);
       if (m) { if (await sendFile(req, res, store.paths.thumb(m[1]), 'image/jpeg', 'private, max-age=86400')) return; return fail(res, 404, '썸네일이 없어요.'); }
+      m = new RegExp(`^/subs/(${ID})\\.vtt$`).exec(pathname);
+      if (m) { const d = insight.read(m[1]); if (!d || !d.transcript || !d.transcript.length) return fail(res, 404, '자막이 없어요.');
+        const body = insight.toVtt(d.transcript); res.writeHead(200, { 'Content-Type': TYPES['.vtt'], 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-cache' }); return res.end(body); }
       const target = path.resolve(config.webRoot, '.' + (pathname === '/' ? '/index.html' : pathname));
       if (target.startsWith(path.resolve(config.webRoot) + path.sep) && await sendFile(req, res, target, TYPES[path.extname(target).toLowerCase()] || 'application/octet-stream')) return;
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('찾을 수 없습니다.');
@@ -314,7 +348,7 @@ function createSunsuTubeApp(overrides = {}) {
     }
   });
   server.on('close', () => store.flush());
-  return { config, server, store, transcoder };
+  return { config, server, store, transcoder, insight };
 }
 
 module.exports = { createSunsuTubeApp };

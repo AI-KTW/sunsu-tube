@@ -205,3 +205,94 @@ test('재생 목록, 인기, 태그, 답글, 싫어요·신고, 관리, 분류 �
     assert.equal((await s.j('/api/playlists/' + pl.id, { method: 'DELETE' })).status, 200); assert.equal((await s.j('/api/playlists')).body.playlists.length, 0);
   } finally { await s.stop(); }
 });
+
+/* ---------- 핵심 뽑기 ---------- */
+const http = require('node:http');
+const { parseSubs, cleanPoints } = require('../server/insight.cjs');
+// 가짜 음성 인식: 정해진 대본을 돌려준다.
+function fakeStt(dir, segs) {
+  const f = path.join(dir, 'fake-stt.cjs');
+  fs.writeFileSync(f, `const a = process.argv.slice(2); if (a[0] === '--check') process.exit(0); require('fs').writeFileSync(a[1], ${JSON.stringify(JSON.stringify({ segments: segs }))});`);
+  return [process.execPath, f];
+}
+// 가짜 AI 서버: 받은 요청을 기록하고 정해진 답을 준다.
+async function fakeLlm(answer) {
+  const calls = [];
+  const srv = http.createServer((req, res) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => { const body = JSON.parse(b); calls.push(body);
+    const out = typeof answer === 'function' ? answer(body, calls.length) : answer;
+    if (out === null) { res.writeHead(500); return res.end('{}'); }
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { content: out } }] })); }); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  return { url: `http://127.0.0.1:${srv.address().port}/v1`, calls, close: () => new Promise((r) => srv.close(r)) };
+}
+const SEGS = [{ start: 0, end: 0.6, text: '안녕하세요 반갑습니다' }, { start: 0.6, end: 1.4, text: '밸브를 잠그기 전에 압력을 확인합니다' }, { start: 1.4, end: 2.0, text: '볼트는 대각선 순서로 조입니다' }, { start: 2.0, end: 2.8, text: '이상으로 마치겠습니다' }];
+const waitInsight = async (s, id, not = ['queued', 'working']) => { for (let i = 0; i < 100; i++) { const r = await s.j(`/api/videos/${id}/insight`); if (r.status === 200 && !not.includes(r.body.insight.status) && s.app.insight.idle()) return r.body.insight; await new Promise((x) => setTimeout(x, 100)); } throw new Error('핵심 뽑기가 끝나지 않음'); };
+const putVideo = async (s, title = '밸브 교체') => { const up = await s.j('/api/upload?' + new URLSearchParams({ filename: 'a.mp4', title }), { method: 'PUT', body: fs.readFileSync(sample(s.dataDir)) }); await s.waitReady(up.body.video.id); return up.body.video.id; };
+
+test('자막 파일 읽기와 구간 다듬기', () => {
+  const segs = parseSubs('WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.500\n첫 줄\n둘째 줄\n\n2\n00:01:02,250 --> 00:01:04,000\n<i>다음</i>\n\n01:05.000 --> 01:06.000\n짧은 형식\n');
+  assert.deepEqual(segs, [{ s: 1, e: 3.5, t: '첫 줄 둘째 줄' }, { s: 62.25, e: 64, t: '다음' }, { s: 65, e: 66, t: '짧은 형식' }]);
+  assert.deepEqual(cleanPoints([{ s: 5, e: 9, t: 'b' }, { s: 1, e: 6, t: 'a' }, { s: 20, e: 20.1, t: '너무 짧음' }, { s: 'x', e: 3 }, { s: 28, e: 99, t: 'c' }], 30),
+    [{ s: 1, e: 6, t: 'a' }, { s: 6, e: 9, t: 'b' }, { s: 28, e: 30, t: 'c' }]);
+});
+
+test('올리면 자동으로 대본·핵심 구간·요약이 생기고, 고치기·다시 만들기·자막·검색이 된다', { skip: !hasFf }, async () => {
+  const llm = await fakeLlm((body, n) => '<think>고민</think>```json\n' + JSON.stringify({ summary: `밸브 교체 순서 ${n}`, points: [{ from: 1, to: 2, text: '압력을 확인하고 대각선으로 조인다' }, { from: 9, to: 12, text: '없는 줄' }] }) + '\n```');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-'));
+  const s = await start({ sttCmd: fakeStt(dir, SEGS), llmUrl: llm.url });
+  try {
+    assert.equal((await s.j('/api/meta')).body.stt, true); assert.equal((await s.j('/api/meta')).body.llm, true);
+    const id = await putVideo(s);
+    let ins = await waitInsight(s, id);
+    assert.equal(ins.status, 'ready'); assert.equal(ins.transcript.length, 4); assert.equal(ins.summary, '밸브 교체 순서 1');
+    assert.deepEqual(ins.points, [{ s: 0.3, e: 2.3, t: '압력을 확인하고 대각선으로 조인다' }], '줄 번호를 시간으로 바꾸고, 없는 줄은 버린다');
+    assert.match(llm.calls[0].messages[1].content, /\[1\] 0:00 밸브를 잠그기 전에 압력을 확인합니다/);
+    let v = (await s.j('/api/videos/' + id)).body; assert.equal(v.video.insight, 'ready'); assert.equal(v.video.coreSec, 2); assert.equal(v.video.subs, true); assert.equal(v.insight.points.length, 1);
+    // 말한 내용으로 검색
+    assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('대각선'))).body.videos.length, 1);
+    assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('없는말'))).body.videos.length, 0);
+    // 자막
+    const vtt = await (await fetch(`${s.base}/subs/${id}.vtt`)).text(); assert.match(vtt, /^WEBVTT\n\n00:00:00.000 --> 00:00:00.600\n안녕하세요 반갑습니다/);
+    // 사람이 고침 → 다시 돌려도(강제가 아니면) 그대로
+    const ed = await s.j(`/api/videos/${id}/insight`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ summary: '내가 쓴 요약', points: [{ s: 1.4, e: 2.0, t: '볼트 순서' }, { s: 0.5, e: 1.2, t: '압력 확인' }] }) });
+    assert.equal(ed.body.insight.edited, true); assert.deepEqual(ed.body.insight.points.map((p) => p.t), ['압력 확인', '볼트 순서']);
+    s.app.insight.enqueue(id); ins = await waitInsight(s, id); assert.equal(ins.summary, '내가 쓴 요약'); assert.equal(llm.calls.length, 1);
+    // 다시 만들기(강제) → AI 답으로 덮어씀
+    assert.equal((await s.j(`/api/videos/${id}/insight`, { method: 'POST', body: '{}' })).status, 200);
+    ins = await waitInsight(s, id); assert.equal(ins.summary, '밸브 교체 순서 2'); assert.equal(ins.edited, false);
+    // 잘라내면 처음부터 다시 만든다
+    await s.j(`/api/videos/${id}/trim`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start: 0, end: 2.5 }) });
+    await s.waitReady(id); ins = await waitInsight(s, id); assert.equal(ins.summary, '밸브 교체 순서 3');
+    // 지우면 파일도 사라진다
+    await s.j('/api/videos/' + id, { method: 'DELETE' }); await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!fs.existsSync(path.join(s.dataDir, 'insight', id + '.json')));
+  } finally { await s.stop(); await llm.close(); }
+});
+
+test('음성 인식이 없으면: 자막 파일을 올려 핵심을 만들고, AI 가 실패해도 대본은 남는다', { skip: !hasFf }, async () => {
+  let fail = false;
+  const llm = await fakeLlm(() => (fail ? null : JSON.stringify({ summary: '요약', points: [{ from: 0, to: 0, text: '핵심' }] })));
+  const s = await start({ sttCmd: null, llmUrl: llm.url });
+  try {
+    const id = await putVideo(s);
+    let ins = await waitInsight(s, id); assert.equal(ins.status, 'none'); assert.match(ins.note, /음성 인식이 설치되지/);
+    assert.equal((await s.j(`/api/videos/${id}/insight`, { method: 'POST', body: '{}' })).status, 400);
+    assert.equal((await s.j(`/api/videos/${id}/subs`, { method: 'PUT', body: '자막 아님' })).status, 400);
+    const srt = '1\n00:00:00,500 --> 00:00:02,000\n펌프를 끄고 전원을 내립니다. 꼭 확인하세요.\n';
+    assert.equal((await s.j(`/api/videos/${id}/subs`, { method: 'PUT', body: srt })).status, 200);
+    ins = await waitInsight(s, id); assert.equal(ins.status, 'ready'); assert.deepEqual(ins.points, [{ s: 0.2, e: 2.3, t: '핵심' }]);
+    fail = true;
+    await s.j(`/api/videos/${id}/insight`, { method: 'POST', body: '{}' }); ins = await waitInsight(s, id);
+    assert.equal(ins.status, 'ready'); assert.match(ins.note, /AI 가 핵심을 고르지 못했어요/); assert.equal(ins.transcript.length, 1); assert.equal(ins.points.length, 1, '전에 만든 핵심은 지우지 않는다');
+  } finally { await s.stop(); await llm.close(); }
+});
+
+test('AI 가 없으면 대본만 만든다. 말소리가 없으면 그렇게 알려 준다', { skip: !hasFf }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-'));
+  const s = await start({ sttCmd: fakeStt(dir, SEGS), llmUrl: '' });
+  const s2 = await start({ sttCmd: fakeStt(fs.mkdtempSync(path.join(os.tmpdir(), 'stt-')), []), llmUrl: '' });
+  try {
+    let ins = await waitInsight(s, await putVideo(s)); assert.equal(ins.status, 'ready'); assert.equal(ins.transcript.length, 4); assert.equal(ins.points.length, 0); assert.match(ins.note, /대본만/);
+    ins = await waitInsight(s2, await putVideo(s2)); assert.equal(ins.status, 'nospeech');
+  } finally { await s.stop(); await s2.stop(); }
+});
