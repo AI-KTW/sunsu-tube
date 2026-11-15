@@ -1,4 +1,4 @@
-/* 순수TV 화면. 경로는 모두 상대 경로(런처의 /module/sunsutube/ 아래에서도 동작). 로그인이 없어 시청 기록·나중에 볼 영상·좋아요 표시는 이 브라우저에 기억한다. */
+/* 순수TV 화면. 경로는 모두 상대 경로(런처의 /module/sunsutv/ 아래에서도 동작). 로그인이 없어 시청 기록·나중에 볼 영상·좋아요 표시는 이 브라우저에 기억한다. */
 const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const api = async (url, opt) => { const r = await fetch(url, opt); const j = await r.json().catch(() => ({ ok: false, message: r.statusText })); if (!r.ok || j.ok === false) throw Object.assign(new Error(j.message || '요청 실패'), { status: r.status, body: j }); return j; };
@@ -6,7 +6,7 @@ const send = (method, body) => ({ method, headers: { 'Content-Type': 'applicatio
 const dur = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`; };
 const ago = (iso) => { const d = (Date.now() - new Date(iso)) / 1000; if (d < 60) return '방금'; if (d < 3600) return Math.floor(d / 60) + '분 전'; if (d < 86400) return Math.floor(d / 3600) + '시간 전'; if (d < 86400 * 30) return Math.floor(d / 86400) + '일 전'; return new Date(iso).toLocaleDateString('ko-KR'); };
 const gb = (b) => (b / 1024 ** 3).toFixed(b > 10 * 1024 ** 3 ? 0 : 1) + ' GB', mb = (b) => b > 1024 ** 3 ? gb(b) : (b / 1024 ** 2).toFixed(0) + ' MB';
-const ls = { get: (k, d) => { try { const v = localStorage.getItem('sunsutube.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('sunsutube.' + k, JSON.stringify(v)); } catch { } } };
+const ls = { get: (k, d) => { try { const v = localStorage.getItem('sunsutv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('sunsutv.' + k, JSON.stringify(v)); } catch { } } };
 let meta = { categories: [] }, state = { q: '', cat: '', sort: 'new', all: false }, poll = null, keyHandler = null, nextTimer = null;
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 2200); }
 const thumbUrl = (v) => `thumb/${v.id}.jpg?v=${v.thumbVer || 0}`;
@@ -271,7 +271,7 @@ async function admin() {
   $('#view').innerHTML = `<h1 class="page">⚙ 관리</h1>
     <div class="box"><h2>저장 공간</h2>영상 ${meta.videos}개 · ${meta.hours.toFixed(1)}시간 · 영상이 쓰는 용량 ${gb(meta.usedBytes)}${meta.freeBytes != null ? ` · 디스크 ${gb(meta.totalBytes - meta.freeBytes)} / ${gb(meta.totalBytes)} 사용 (${gb(meta.freeBytes)} 남음)<div class="meter"><div class="${pct > 80 ? 'warn' : ''}" style="width:${pct.toFixed(0)}%"></div></div>` : ''}${meta.compress ? '' : '<p class="msg bad">ffmpeg 가 없어 영상을 줄이지 못하고 있어요. 서버에 ffmpeg 를 설치하세요.</p>'}</div>
     <div class="box"><h2>핵심 뽑기</h2>말소리를 글로 바꾸기: <b>${meta.stt ? '켜짐' : '꺼짐'}</b> · AI 로 핵심 고르기: <b>${meta.llm ? '켜짐' : '꺼짐'}</b>
-      ${meta.stt ? '<div class="row" style="justify-content:flex-start;margin-top:8px"><button id="insAll" class="small">핵심이 없는 영상 모두 만들기</button></div>' : '<p class="meta">서버에서 tools/install_stt.sh 를 한 번 실행하면 켜져요. 꺼져 있어도 자막 파일을 올리거나 직접 고를 수 있어요.</p>'}${meta.llm ? '' : '<p class="meta">AI 는 서버 환경변수 SUNSUTUBE_LLM_URL 에 주소를 넣으면 켜져요.</p>'}</div>
+      ${meta.stt ? '<div class="row" style="justify-content:flex-start;margin-top:8px"><button id="insAll" class="small">핵심이 없는 영상 모두 만들기</button></div>' : '<p class="meta">서버에서 tools/install_stt.sh 를 한 번 실행하면 켜져요. 꺼져 있어도 자막 파일을 올리거나 직접 고를 수 있어요.</p>'}${meta.llm ? '' : '<p class="meta">AI 는 서버 환경변수 SUNSUTV_LLM_URL 에 주소를 넣으면 켜져요.</p>'}</div>
     <div class="box"><h2>분류</h2><div id="cats">${meta.categories.map((c) => `<div class="catrow"><input value="${esc(c)}" data-old="${esc(c)}" maxlength="20"><button class="small" data-catdel>지우기</button></div>`).join('')}</div>
       <div class="row" style="justify-content:flex-start"><button id="catAdd" class="small">＋ 분류 추가</button><button id="catSave" class="small primary">분류 저장</button><span class="meta">이름을 바꾸면 영상도 따라 바뀌고, 지운 분류의 영상은 맨 아래 분류로 가요.</span></div></div>
     <div class="box"><h2>전체 영상</h2><div class="chips"><select id="aSort"><option value="new">최신순</option><option value="size">용량 큰 순</option><option value="views">조회순</option><option value="reports">신고 많은 순</option></select><span class="sp"></span><span id="selInfo" class="meta"></span><button id="bulkDel" disabled>고른 영상 지우기</button></div>

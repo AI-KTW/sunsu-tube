@@ -3,7 +3,7 @@
   python stt.py --check            설치됐는지 확인(됐으면 종료 코드 0)
   python stt.py in.wav out.json    out.json = {"segments":[{"start":0.0,"end":2.1,"text":"..."}]}
 
-환경변수: SUNSUTUBE_STT_MODEL(기본 small), SUNSUTUBE_STT_DEVICE(기본 cpu, GPU 는 cuda), SUNSUTUBE_STT_LANG(기본 ko)
+환경변수: SUNSUTV_STT_MODEL(기본 small), SUNSUTV_STT_DEVICE(기본 cpu, GPU 는 cuda), SUNSUTV_STT_LANG(기본 ko)
 """
 import json
 import os
@@ -19,10 +19,10 @@ def main():
         return 2
     from faster_whisper import WhisperModel
 
-    device = os.environ.get("SUNSUTUBE_STT_DEVICE", "cpu")
-    model = WhisperModel(os.environ.get("SUNSUTUBE_STT_MODEL", "small"), device=device,
+    device = os.environ.get("SUNSUTV_STT_DEVICE", "cpu")
+    model = WhisperModel(os.environ.get("SUNSUTV_STT_MODEL", "small"), device=device,
                          compute_type="float16" if device == "cuda" else "int8")
-    lang = os.environ.get("SUNSUTUBE_STT_LANG", "ko") or None
+    lang = os.environ.get("SUNSUTV_STT_LANG", "ko") or None
     # 16kHz 모노 wav 를 직접 읽는다(영상 해석 라이브러리 버전 문제를 피한다).
     import wave
     import numpy as np
