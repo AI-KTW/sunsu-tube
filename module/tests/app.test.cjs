@@ -333,3 +333,46 @@ test('올린 영상에서 고른 구간만 남기고, 올릴 때 고른 구간�
     v = await s.waitReady(up.body.video.id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4);
   } finally { await s.stop(); }
 });
+
+/* ---------- 가리기 · 소리 정리 ---------- */
+const { cleanBoxes } = require('../server/transcode.cjs');
+test('가릴 네모 다듬기', () => {
+  assert.deepEqual(cleanBoxes([{ x: 0.5, y: 0.5, w: 0.9, h: 0.2 }, { x: 0.1, y: 0.1, w: 0.001, h: 0.5 }, { x: 0, y: 0, w: 0.3, h: 0.3, s: 2, e: 1 }, { x: 0.2, y: 0.2, w: 0.2, h: 0.2, s: 1, e: 2 }], 10),
+    [{ x: 0.5, y: 0.5, w: 0.5, h: 0.2, s: 0, e: 11 }, { x: 0.2, y: 0.2, w: 0.2, h: 0.2, s: 1, e: 2 }]);
+});
+test('가리기: 그린 곳만, 정한 시간에만 모자이크. 소리 정리: 화면은 그대로 두고 소리만. 올릴 때 소리 정리', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  // 한 점의 색(평균)을 뽑는다
+  const px = (file, t, x, y) => { const r = spawnSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-vf', `crop=8:8:${x}:${y},scale=1:1`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']); return [...r.stdout]; };
+  const far = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+  try {
+    const id = await putVideo(s), file = path.join(s.dataDir, 'media', id + '.mp4');
+    // 가는 줄무늬가 있는 곳(모자이크하면 색이 섞여 달라진다)과 건드리지 않을 곳
+    const before = { in1: px(file, 1.5, 400, 100), out1: px(file, 1.5, 1000, 600), in0: px(file, 0.3, 1000, 400) };
+    const region = (f, t) => spawnSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', f, '-frames:v', '1', '-vf', 'crop=256:216:910:250', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 24 }).stdout;
+    const regionBefore = { 1.5: region(file, 1.5), 0.3: region(file, 0.3) };
+    assert.equal((await s.j(`/api/videos/${id}/blur`, J({ boxes: [] }))).status, 400);
+    assert.equal((await s.j(`/api/videos/${id}/blur`, J({ boxes: [{ x: 0.7, y: 0.33, w: 0.22, h: 0.34, s: 1, e: 2 }] }))).body.video.status, 'processing');
+    let v = await s.waitReady(id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 2.5);
+    const after = { in1: px(file, 1.5, 400, 100), out1: px(file, 1.5, 1000, 600), in0: px(file, 0.3, 1000, 400) };
+    assert.ok(far(before.out1, after.out1) < 40, '가리지 않은 곳은 그대로');
+    assert.ok(far(before.in0, after.in0) < 40, '정한 시간 밖에서는 그대로');
+    // 가린 곳은 정한 시간(1~2초)에만 화면이 달라진다
+    const mad = (a, b) => { let n = 0; for (let k = 0; k < a.length; k++) n += Math.abs(a[k] - b[k]); return n / a.length; };
+    const d15 = mad(regionBefore[1.5], region(file, 1.5)), d03 = mad(regionBefore[0.3], region(file, 0.3));
+    assert.ok(d15 > 8 && d03 < 3, `가린 곳은 정한 시간에만 달라진다 (안 ${d15.toFixed(1)}, 밖 ${d03.toFixed(1)})`);
+    // 소리 정리: 화면 스트림은 그대로(복사), 소리는 남는다
+    const vsize = () => spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'csv=p=0', file], { encoding: 'utf8' }).stdout.trim();
+    const frames = vsize();
+    assert.equal((await s.j(`/api/videos/${id}/audio`, J({}))).body.video.status, 'processing');
+    v = await s.waitReady(id); assert.equal(v.status, 'ready'); assert.equal(v.audioFixed, true); assert.equal(v.note, ''); assert.equal(vsize(), frames);
+    assert.match(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file], { encoding: 'utf8' }).stdout, /audio/);
+    assert.deepEqual(fs.readdirSync(path.join(s.dataDir, 'media')).filter((f) => f.includes('.fix')), []);
+    // 올릴 때 소리 정리 + 구간 남기기를 함께
+    const buf = fs.readFileSync(sample(s.dataDir, 'c.mp4'));
+    const init = await s.j('/api/uploads', J({ filename: 'c.mp4', size: buf.length, title: '정리해서 올림', clean: true, keep: [{ s: 0, e: 1 }, { s: 2, e: 3 }] }));
+    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: buf });
+    v = await s.waitReady(done.body.video.id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4); assert.equal(s.app.store.video(v.id).cleanAudio, undefined);
+  } finally { await s.stop(); }
+});

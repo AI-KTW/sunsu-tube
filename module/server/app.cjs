@@ -4,7 +4,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { createConfig } = require('./config.cjs');
 const { createStore } = require('./store.cjs');
-const { createTranscoder, cleanRanges } = require('./transcode.cjs');
+const { createTranscoder, cleanRanges, cleanBoxes } = require('./transcode.cjs');
 const { createInsight } = require('./insight.cjs');
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -61,7 +61,7 @@ function createSunsuTvApp(overrides = {}) {
   const store = createStore(config.dataDir, { categories: config.categories });
   const insight = createInsight(config, store, overrides.log || console.log);
   // 변환이 끝나면 핵심을 뽑는다. 잘라낸 영상은 시간이 달라지므로 처음부터 다시.
-  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') insight.reset(v); insight.enqueue(v.id); });
+  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') insight.reset(v); if (type === 'trim' || type === 'ingest') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
   const { db } = store;
 
   // 서버가 꺼졌다 켜지면: 변환 중이던 영상을 다시 줄 세우고, 하루 넘은 올리다 만 파일을 치운다.
@@ -76,7 +76,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -100,6 +100,7 @@ function createSunsuTvApp(overrides = {}) {
     const title = clean(meta.title, 100) || clean(path.basename(meta.filename || '', path.extname(meta.filename || '')), 100);
     return { id, title, desc: cleanText(meta.desc, 2000), category: db.categories.includes(meta.cat) ? meta.cat : db.categories[db.categories.length - 1], tags: tagsOf(meta.tags),
       visibility: meta.visibility === 'unlisted' ? 'unlisted' : 'public', created: new Date().toISOString(), status: 'processing', originalBytes: bytes, incoming, views: 0, likes: 0, dislikes: 0,
+      ...(meta.clean === true || meta.clean === '1' ? { cleanAudio: true } : {}),
       ...(Array.isArray(meta.keep) && cleanRanges(meta.keep).length ? { keep: meta.keep.slice(0, 60).map((r) => ({ s: Number(r.s), e: Number(r.e) })) } : {}) };
   }
   function checkUpload(filename, size) {
@@ -145,7 +146,7 @@ function createSunsuTvApp(overrides = {}) {
       const ext = checkUpload(b.filename, size);
       const id = store.newId(), file = store.paths.incoming(id, ext);
       fs.writeFileSync(file, '');
-      db.uploads.push({ id, file, size, received: 0, created: new Date().toISOString(), meta: { filename: clean(b.filename, 200), title: b.title, cat: b.cat, desc: b.desc, tags: b.tags, visibility: b.visibility, keep: b.keep } });
+      db.uploads.push({ id, file, size, received: 0, created: new Date().toISOString(), meta: { filename: clean(b.filename, 200), title: b.title, cat: b.cat, desc: b.desc, tags: b.tags, visibility: b.visibility, keep: b.keep, clean: b.clean === true } });
       store.save(); return sendJson(res, 200, { ok: true, uploadId: id, received: 0 });
     }
     if (!um) return fail(res, 404, '없는 API 경로입니다.');
@@ -283,6 +284,12 @@ function createSunsuTvApp(overrides = {}) {
       if (insight.llmOn) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, insight: insightOf(v) });
     }
+    if ((sub === 'blur' || sub === 'audio') && m === 'POST') {   // 가리기(모자이크) · 소리 정리
+      if (v.status !== 'ready' || !transcoder.available) throw err(400, transcoder.available ? '영상 변환이 끝난 뒤에 할 수 있어요.' : 'ffmpeg 가 없어 할 수 없어요.');
+      if (sub === 'blur') { const boxes = cleanBoxes((await readJson(req)).boxes, v.duration || Infinity); if (!boxes.length) throw err(400, '가릴 곳을 하나 이상 그려 주세요.'); v.status = 'processing'; store.save(); transcoder.enqueueBlur(v.id, boxes); }
+      else { v.status = 'processing'; store.save(); transcoder.enqueueAudio(v.id); }
+      return sendJson(res, 200, { ok: true, video: publicVideo(v) });
+    }
     if (sub === 'cut' && m === 'POST') {   // 필요한 부분만 남기기: 고른 구간들만 이어 붙이고 나머지는 지운다
       if (v.status !== 'ready' || !transcoder.available) throw err(400, transcoder.available ? '영상 변환이 끝난 뒤에 편집할 수 있어요.' : 'ffmpeg 가 없어 편집할 수 없어요.');
       const ranges = cleanRanges((await readJson(req)).keep, v.duration || Infinity);
@@ -330,7 +337,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }
