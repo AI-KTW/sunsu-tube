@@ -4,7 +4,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { createConfig } = require('./config.cjs');
 const { createStore } = require('./store.cjs');
-const { createTranscoder } = require('./transcode.cjs');
+const { createTranscoder, cleanRanges } = require('./transcode.cjs');
 const { createInsight } = require('./insight.cjs');
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -99,7 +99,8 @@ function createSunsuTvApp(overrides = {}) {
   function newVideo(id, meta, bytes, incoming) {
     const title = clean(meta.title, 100) || clean(path.basename(meta.filename || '', path.extname(meta.filename || '')), 100);
     return { id, title, desc: cleanText(meta.desc, 2000), category: db.categories.includes(meta.cat) ? meta.cat : db.categories[db.categories.length - 1], tags: tagsOf(meta.tags),
-      visibility: meta.visibility === 'unlisted' ? 'unlisted' : 'public', created: new Date().toISOString(), status: 'processing', originalBytes: bytes, incoming, views: 0, likes: 0, dislikes: 0 };
+      visibility: meta.visibility === 'unlisted' ? 'unlisted' : 'public', created: new Date().toISOString(), status: 'processing', originalBytes: bytes, incoming, views: 0, likes: 0, dislikes: 0,
+      ...(Array.isArray(meta.keep) && cleanRanges(meta.keep).length ? { keep: meta.keep.slice(0, 60).map((r) => ({ s: Number(r.s), e: Number(r.e) })) } : {}) };
   }
   function checkUpload(filename, size) {
     const ext = path.extname(clean(filename, 200)).toLowerCase();
@@ -144,7 +145,7 @@ function createSunsuTvApp(overrides = {}) {
       const ext = checkUpload(b.filename, size);
       const id = store.newId(), file = store.paths.incoming(id, ext);
       fs.writeFileSync(file, '');
-      db.uploads.push({ id, file, size, received: 0, created: new Date().toISOString(), meta: { filename: clean(b.filename, 200), title: b.title, cat: b.cat, desc: b.desc, tags: b.tags, visibility: b.visibility } });
+      db.uploads.push({ id, file, size, received: 0, created: new Date().toISOString(), meta: { filename: clean(b.filename, 200), title: b.title, cat: b.cat, desc: b.desc, tags: b.tags, visibility: b.visibility, keep: b.keep } });
       store.save(); return sendJson(res, 200, { ok: true, uploadId: id, received: 0 });
     }
     if (!um) return fail(res, 404, '없는 API 경로입니다.');
@@ -282,6 +283,12 @@ function createSunsuTvApp(overrides = {}) {
       if (insight.llmOn) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, insight: insightOf(v) });
     }
+    if (sub === 'cut' && m === 'POST') {   // 필요한 부분만 남기기: 고른 구간들만 이어 붙이고 나머지는 지운다
+      if (v.status !== 'ready' || !transcoder.available) throw err(400, transcoder.available ? '영상 변환이 끝난 뒤에 편집할 수 있어요.' : 'ffmpeg 가 없어 편집할 수 없어요.');
+      const ranges = cleanRanges((await readJson(req)).keep, v.duration || Infinity);
+      if (!ranges.length) throw err(400, '남길 구간을 하나 이상 골라 주세요.');
+      v.status = 'processing'; store.save(); transcoder.enqueueCut(v.id, ranges); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
+    }
     if (sub === 'comments') {
       if (m === 'POST' && !cid) {
         const b = await readJson(req), text = cleanText(b.text, 1000); if (!text) throw err(400, '댓글 내용을 적어 주세요.');
@@ -323,7 +330,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }
