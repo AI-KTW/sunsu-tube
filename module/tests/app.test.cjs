@@ -449,3 +449,40 @@ test('내려받기, 시청 그래프, 필독, 겹치는 영상 찾기', { skip: 
     await s.waitReady(r.body.video.id);
   } finally { await s.stop(); }
 });
+
+/* ---------- 질문 댓글에 AI 가 답하기 · 실시간 채팅 ---------- */
+test('질문 댓글에는 AI 가 영상 내용으로 답글을 달고, 영상에 없는 질문이나 질문이 아닌 댓글에는 달지 않는다', { skip: !hasFf }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-'));
+  const llm = await fakeLlm((body) => { const c = body.messages[1].content; if (/썸네일/.test(c)) return '{"hooks":[]}';
+    if (/^아래는 영상에서 한 말이다/.test(c)) return /질문: 볼트/.test(c) ? '{"answer":"대각선 순서로 조입니다.","line":2}' : '{"answer":null}';
+    return JSON.stringify({ summary: '요약', points: [{ from: 1, to: 2, text: '핵심' }] }); });
+  const s = await start({ sttCmd: fakeStt(dir, SEGS), llmUrl: llm.url });
+  const C = (text) => s.j(`/api/videos/${id}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+  let id;
+  try {
+    id = await putVideo(s); await waitInsight(s, id);
+    const q = await C('볼트는 어떤 순서로 조이나요?'); assert.equal(q.body.aiAnswering, true);
+    let list; for (let i = 0; i < 50; i++) { list = (await s.j('/api/videos/' + id)).body.comments; if (list.length > 1) break; await new Promise((r) => setTimeout(r, 100)); }
+    assert.equal(list.length, 2); const a = list[1];
+    assert.equal(a.ai, true); assert.equal(a.parent, q.body.comment.id); assert.equal(a.text, '대각선 순서로 조입니다.'); assert.equal(a.at, 1, '근거가 된 장면 시간');
+    assert.match(llm.calls[llm.calls.length - 1].messages[1].content, /\[2\] 0:01 볼트는 대각선 순서로 조입니다/);
+    assert.equal((await C('점심 메뉴가 뭔가요?')).body.aiAnswering, true); assert.equal((await C('잘 봤습니다')).body.aiAnswering, false);
+    await new Promise((r) => setTimeout(r, 500)); assert.equal((await s.j('/api/videos/' + id)).body.comments.length, 4, '답이 없으면 답글을 달지 않는다');
+  } finally { await s.stop(); await llm.close(); }
+});
+test('실시간 채팅: 새 글만 가져가고, 지금 보는 사람 수를 센다', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const say = (name, text) => s.j(`/api/videos/${id}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, text }) });
+  let id;
+  try {
+    id = await putVideo(s);
+    assert.deepEqual((await s.j(`/api/videos/${id}/chat?after=0&cid=a`)).body, { ok: true, messages: [], last: 0, watching: 1 });
+    assert.equal((await say('김주무관', '  ')).status, 400);
+    assert.equal((await say('김주무관', '안녕하세요')).body.message.seq, 1); assert.equal((await say('', '질문 있어요')).body.message.name, '익명');
+    let r = (await s.j(`/api/videos/${id}/chat?after=0&cid=b`)).body; assert.deepEqual(r.messages.map((x) => x.text), ['안녕하세요', '질문 있어요']); assert.equal(r.last, 2); assert.equal(r.watching, 2);
+    r = (await s.j(`/api/videos/${id}/chat?after=2&cid=a`)).body; assert.equal(r.messages.length, 0); assert.equal(r.watching, 2);
+    for (let i = 0; i < 305; i++) s.app.store.db.chat[id].push({ seq: 3 + i, name: 'x', text: 't' + i, at: '' }); await say('끝', '마지막');
+    assert.equal(s.app.store.db.chat[id].length, 300, '300개까지만 남긴다');
+    await s.j('/api/videos/' + id, { method: 'DELETE' }); assert.equal(s.app.store.db.chat[id], undefined);
+  } finally { await s.stop(); }
+});

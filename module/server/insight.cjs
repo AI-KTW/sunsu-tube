@@ -154,6 +154,21 @@ function createInsight(config, store, log = console.log) {
     edit(v, body) { const data = read(v.id) || { transcript: [], summary: '', points: [] }; data.summary = oneLine(body.summary, 400); data.points = cleanPoints(body.points, v.duration); data.edited = true; write(v.id, data); mark(v, data, 'ready'); return data; },
     setSubs(v, text) { const segs = parseSubs(text); if (!segs.length) return null; const data = read(v.id) || { summary: '', points: [], edited: false }; data.transcript = segs; data.fromFile = true; write(v.id, data); mark(v, data, v.insight || 'none'); return data; },
     // 검색용: 말한 내용 전체(소문자)
+    // 질문에 영상 내용만으로 답한다. 영상에 답이 없으면 null (지어내지 않는다).
+    async answer(v, q) {
+      const segs = cached(v.id).segs; if (!llmOn || !segs.length) return null;
+      let idx = segs.map((_, i) => i);
+      if (segs.reduce((n, x) => n + x.t.length, 0) > 6000) {   // 긴 영상은 질문과 관련 있어 보이는 줄과 그 앞뒤만 보낸다
+        const words = [...new Set(q.toLowerCase().split(/[^0-9a-z가-힣]+/).filter((w) => w.length >= 2).flatMap((w) => (w.length > 2 ? [w, w.slice(0, 2)] : [w])))];
+        const score = segs.map((x) => { const t = x.t.toLowerCase(); return words.filter((w) => t.includes(w)).length; }), keep = new Set();
+        idx.filter((i) => score[i] > 0).sort((a, b) => score[b] - score[a]).slice(0, 15).forEach((i) => { for (let k = i - 2; k <= i + 2; k++) if (k >= 0 && k < segs.length) keep.add(k); });
+        idx = [...keep].sort((a, b) => a - b); if (!idx.length) return null;
+      }
+      const ans = await chat([{ role: 'system', content: '너는 영상에서 한 말만 근거로 질문에 답하는 도우미다. 설명 없이 JSON 만 답한다.' },
+        { role: 'user', content: `아래는 영상에서 한 말이다. 각 줄은 "[번호] 시간 내용" 이다. 이 내용만 근거로 질문에 답해라.\n\n- 답이 영상에 있으면: 두 문장 이내로 쉽게 답하고(answer), 근거가 된 줄 번호 하나를 적는다(line).\n- 영상에 답이 없으면 지어내지 말고 answer 를 null 로 둔다.\n\n답 형식(이 JSON 만): {"answer":"...","line":12} 또는 {"answer":null}\n\n질문: ${oneLine(q, 300)}\n\n영상 내용:\n${idx.map((i) => `[${i}] ${mmss(segs[i].s)} ${segs[i].t}`).join('\n')}` }]);
+      const j = jsonOf(ans); if (!j || !j.answer || typeof j.answer !== 'string') return null;
+      const line = Math.round(Number(j.line)); return { text: oneLine(j.answer, 400), at: segs[line] ? Math.floor(segs[line].s) : null };
+    },
     textOf: (id) => cached(id).text,
     pointsOf: (id) => cached(id).points,
     // 찾는 말이 나온 장면(최대 3곳)
