@@ -77,7 +77,7 @@ function createSunsuTubeApp(overrides = {}) {
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
     low: !!v.low, visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
-    insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '' });
+    insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
   function list(url) {
@@ -92,7 +92,8 @@ function createSunsuTubeApp(overrides = {}) {
       size: (a, b) => (b.bytes || 0) - (a.bytes || 0), reports: (a, b) => (b.reports || []).length - (a.reports || []).length }[sort] || ((a, b) => b.created.localeCompare(a.created));
     const ids = url.searchParams.get('ids');
     if (ids !== null) { const want = ids.split(',').filter(Boolean); return want.map((id) => store.video(id)).filter((v) => v && (all || !v.hidden)).map(publicVideo); }
-    return [...out].sort(by).map(publicVideo);
+    const words = q ? q.split(/\s+/).filter(Boolean) : null;
+    return [...out].sort(by).map((v) => (words ? { ...publicVideo(v), hits: insight.hitsOf(v.id, words) } : publicVideo(v)));
   }
 
   function newVideo(id, meta, bytes, incoming) {

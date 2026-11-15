@@ -49,6 +49,7 @@ function createInsight(config, store, log = console.log) {
   const file = (id) => store.paths.insight(id);
   const read = (id) => { try { return JSON.parse(fs.readFileSync(file(id), 'utf8')); } catch { return null; } };
   const write = (id, data) => { fs.writeFileSync(file(id), JSON.stringify(data)); texts.delete(id); };
+  const cached = (id) => { if (!texts.has(id)) { const d = read(id) || {}, segs = d.transcript || []; texts.set(id, { text: segs.map((x) => x.t).join(' ').toLowerCase(), segs, points: d.points || [] }); } return texts.get(id); };
   const sttReady = config.sttCmd && config.sttCmd.length ? run(config.sttCmd[0], [...config.sttCmd.slice(1), '--check'], 60000).then((r) => r.code === 0) : Promise.resolve(false);
   sttReady.then((ok) => { if (!ok) log('[순수튜브] 음성 인식이 준비되지 않았어요. 핵심 뽑기는 자막 파일을 올리거나 손으로 고를 때만 됩니다. (tools/install_stt.sh)'); });
   const llmOn = !!config.llmUrl;
@@ -140,7 +141,10 @@ function createInsight(config, store, log = console.log) {
     edit(v, body) { const data = read(v.id) || { transcript: [], summary: '', points: [] }; data.summary = oneLine(body.summary, 400); data.points = cleanPoints(body.points, v.duration); data.edited = true; write(v.id, data); mark(v, data, 'ready'); return data; },
     setSubs(v, text) { const segs = parseSubs(text); if (!segs.length) return null; const data = read(v.id) || { summary: '', points: [], edited: false }; data.transcript = segs; data.fromFile = true; write(v.id, data); mark(v, data, v.insight || 'none'); return data; },
     // 검색용: 말한 내용 전체(소문자)
-    textOf(id) { if (!texts.has(id)) { const d = read(id); texts.set(id, d && d.transcript ? d.transcript.map((x) => x.t).join(' ').toLowerCase() : ''); } return texts.get(id); },
+    textOf: (id) => cached(id).text,
+    pointsOf: (id) => cached(id).points,
+    // 찾는 말이 나온 장면(최대 3곳)
+    hitsOf(id, words) { const out = []; for (const x of cached(id).segs) { const t = x.t.toLowerCase(); if (words.some((w) => t.includes(w))) { out.push({ s: x.s, t: x.t }); if (out.length >= 3) break; } } return out; },
     idle: () => !busy && queue.length === 0
   };
 }
