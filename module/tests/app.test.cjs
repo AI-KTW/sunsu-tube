@@ -377,17 +377,24 @@ test('가리기: 그린 곳만, 정한 시간에만 모자이크. 소리 정리:
   } finally { await s.stop(); }
 });
 
-/* ---------- 유튜브 링크 걸기 ---------- */
-test('유튜브 링크 걸기: 주소만 등록하고 영상은 저장하지 않는다', async () => {
+/* ---------- 링크 영상 ---------- */
+test('링크 영상: 주소만 등록하고 영상은 저장하지 않는다(유튜브, 비메오, 영상 파일 주소, 그 밖의 주소)', async () => {
   const s = await start({ sttCmd: null });
   const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   try {
-    for (const bad of ['', 'https://example.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=short', 'youtube']) assert.equal((await s.j('/api/links', J({ url: bad, title: 'x' }))).status, 400, bad);
+    for (const bad of ['', 'youtube', 'javascript:alert(1)', 'ftp://a.b/c.mp4']) assert.equal((await s.j('/api/links', J({ url: bad, title: 'x' }))).status, 400, bad);
     assert.equal((await s.j('/api/links', J({ url: 'https://youtu.be/dQw4w9WgXcQ' }))).status, 400, '제목이 있어야 한다');
     const ids = [];
     for (const u of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10s', 'https://youtu.be/dQw4w9WgXcQ?si=abc', 'https://m.youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/embed/dQw4w9WgXcQ', 'https://www.youtube.com/live/dQw4w9WgXcQ']) {
-      const r = await s.j('/api/links', J({ url: u, title: '수돗물 이야기', cat: '안내', tags: '홍보' })); assert.equal(r.status, 200, u); assert.equal(r.body.video.yt, 'dQw4w9WgXcQ'); ids.push(r.body.video.id);
+      const r = await s.j('/api/links', J({ url: u, title: '수돗물 이야기', cat: '안내', tags: '홍보' })); assert.equal(r.status, 200, u);
+      assert.deepEqual(r.body.video.link, { type: 'youtube', id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }); assert.equal(r.body.video.thumb, true); ids.push(r.body.video.id);
     }
+    const link = async (url) => (await s.j('/api/links', J({ url, title: '다른 링크' }))).body.video.link;
+    assert.deepEqual(await link('https://vimeo.com/76979871'), { type: 'vimeo', id: '76979871', url: 'https://vimeo.com/76979871' });
+    assert.deepEqual(await link('https://player.vimeo.com/video/76979871?h=1'), { type: 'vimeo', id: '76979871', url: 'https://vimeo.com/76979871' });
+    assert.deepEqual(await link('http://files.example.go.kr/edu/safety.MP4?x=1'), { type: 'file', url: 'http://files.example.go.kr/edu/safety.MP4?x=1' });
+    assert.deepEqual(await link('https://tv.example.com/v/12345'), { type: 'page', url: 'https://tv.example.com/v/12345' });
+    assert.deepEqual(await link('https://www.youtube.com/@channel'), { type: 'page', url: 'https://www.youtube.com/@channel' });
     const v = (await s.j('/api/videos/' + ids[0])).body.video;
     assert.equal(v.kind, 'link'); assert.equal(v.status, 'ready'); assert.equal(v.bytes, 0); assert.equal(v.category, '안내'); assert.deepEqual(v.tags, ['홍보']);
     assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('수돗물'))).body.videos.length, 5);
@@ -396,6 +403,6 @@ test('유튜브 링크 걸기: 주소만 등록하고 영상은 저장하지 않
     assert.equal((await s.j(`/api/videos/${ids[0]}/view`, { method: 'POST' })).body.views, 1);
     assert.equal((await s.j(`/api/videos/${ids[0]}/comments`, J({ text: '좋아요' }))).status, 200);
     assert.equal((await s.j('/api/videos/' + ids[0], { method: 'DELETE' })).status, 200);
-    assert.equal((await s.j('/api/meta')).body.videos, 4);
+    assert.equal((await s.j('/api/meta')).body.videos, 9);
   } finally { await s.stop(); }
 });
