@@ -237,7 +237,8 @@ test('자막 파일 읽기와 구간 다듬기', () => {
 });
 
 test('올리면 자동으로 대본·핵심 구간·요약이 생기고, 고치기·다시 만들기·자막·검색이 된다', { skip: !hasFf }, async () => {
-  const llm = await fakeLlm((body, n) => '<think>고민</think>```json\n' + JSON.stringify({ summary: `밸브 교체 순서 ${n}`, points: [{ from: 1, to: 2, text: '압력을 확인하고 대각선으로 조인다' }, { from: 9, to: 12, text: '없는 줄' }] }) + '\n```');
+  let picks = 0;
+  const llm = await fakeLlm((body) => (/썸네일/.test(body.messages[1].content) ? JSON.stringify({ hooks: ['이 순서 틀리면 샙니다.', '“볼트” 왜 대각선일까', '이 순서 틀리면 샙니다', '압력 0 확인했나요'] }) : null) || '<think>고민</think>```json\n' + JSON.stringify({ summary: `밸브 교체 순서 ${++picks}`, points: [{ from: 1, to: 2, text: '압력을 확인하고 대각선으로 조인다' }, { from: 9, to: 12, text: '없는 줄' }] }) + '\n```');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-'));
   const s = await start({ sttCmd: fakeStt(dir, SEGS), llmUrl: llm.url });
   try {
@@ -248,6 +249,13 @@ test('올리면 자동으로 대본·핵심 구간·요약이 생기고, 고치�
     assert.deepEqual(ins.points, [{ s: 0.3, e: 2.3, t: '압력을 확인하고 대각선으로 조인다' }], '줄 번호를 시간으로 바꾸고, 없는 줄은 버린다');
     assert.match(llm.calls[0].messages[1].content, /\[1\] 0:00 밸브를 잠그기 전에 압력을 확인합니다/);
     let v = (await s.j('/api/videos/' + id)).body; assert.equal(v.video.insight, 'ready'); assert.equal(v.video.coreSec, 2); assert.equal(v.video.subs, true); assert.equal(v.insight.points.length, 1);
+    // 썸네일 문구: 따옴표·마침표를 떼고 겹치는 것은 하나로
+    assert.deepEqual(ins.hooks, ['이 순서 틀리면 샙니다', '볼트 왜 대각선일까', '압력 0 확인했나요']); assert.match(llm.calls[1].messages[1].content, /거짓/);
+    assert.deepEqual((await s.j(`/api/videos/${id}/hooks`, { method: 'POST', body: '{}' })).body.hooks.length, 3); llm.calls.pop();
+    // 자동 썸네일은 한 번만, 사람이 고른 썸네일은 덮어쓰지 않는다
+    const jpg = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=320x180', '-frames:v', '1', '-f', 'mjpeg', '-'], { maxBuffer: 1 << 24 }).stdout, img = { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: jpg };
+    let th = (await s.j(`/api/videos/${id}/thumb?auto=1`, img)).body; assert.equal(th.video.autoThumb, true); assert.equal(th.video.customThumb, false);
+    assert.equal((await s.j(`/api/videos/${id}/thumb?auto=1`, img)).body.skipped, true);
     // 말한 내용으로 검색
     assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('대각선'))).body.videos.length, 1);
     assert.equal((await s.j('/api/videos?q=' + encodeURIComponent('없는말'))).body.videos.length, 0);
@@ -256,7 +264,7 @@ test('올리면 자동으로 대본·핵심 구간·요약이 생기고, 고치�
     // 사람이 고침 → 다시 돌려도(강제가 아니면) 그대로
     const ed = await s.j(`/api/videos/${id}/insight`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ summary: '내가 쓴 요약', points: [{ s: 1.4, e: 2.0, t: '볼트 순서' }, { s: 0.5, e: 1.2, t: '압력 확인' }] }) });
     assert.equal(ed.body.insight.edited, true); assert.deepEqual(ed.body.insight.points.map((p) => p.t), ['압력 확인', '볼트 순서']);
-    s.app.insight.enqueue(id); ins = await waitInsight(s, id); assert.equal(ins.summary, '내가 쓴 요약'); assert.equal(llm.calls.length, 1);
+    s.app.insight.enqueue(id); ins = await waitInsight(s, id); assert.equal(ins.summary, '내가 쓴 요약'); assert.equal(llm.calls.length, 2, '핵심 1번 + 문구 1번');
     // 다시 만들기(강제) → AI 답으로 덮어씀
     assert.equal((await s.j(`/api/videos/${id}/insight`, { method: 'POST', body: '{}' })).status, 200);
     ins = await waitInsight(s, id); assert.equal(ins.summary, '밸브 교체 순서 2'); assert.equal(ins.edited, false);

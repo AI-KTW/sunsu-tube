@@ -90,7 +90,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -232,13 +232,13 @@ function createSunsuTvApp(overrides = {}) {
     return fail(res, 405, '지원하지 않는 요청입니다.');
   }
 
-  const insightOf = (v) => { const d = insight.read(v.id) || {}; return { status: v.insight || 'none', note: v.insightNote || '', summary: d.summary || '', points: d.points || [], transcript: d.transcript || [], edited: !!d.edited }; };
+  const insightOf = (v) => { const d = insight.read(v.id) || {}; return { status: v.insight || 'none', note: v.insightNote || '', summary: d.summary || '', points: d.points || [], transcript: d.transcript || [], hooks: d.hooks || [], edited: !!d.edited }; };
 
   async function videoApi(req, res, vm) {
     const m = req.method, v = store.video(vm[1]);
     if (!v) return fail(res, 404, '영상을 찾지 못했어요.');
     const sub = vm[3], cid = vm[5];
-    if (v.kind === 'link' && ['thumb', 'trim', 'cut', 'blur', 'audio', 'insight', 'subs'].includes(sub)) throw err(400, '링크로 건 영상에는 쓸 수 없어요.');
+    if (v.kind === 'link' && ['thumb', 'trim', 'cut', 'blur', 'audio', 'insight', 'subs', 'hooks'].includes(sub)) throw err(400, '링크로 건 영상에는 쓸 수 없어요.');
     if (!sub) {
       if (m === 'GET') {
         const related = db.videos.filter((x) => x.id !== v.id && x.status === 'ready' && listed(x)).map((x) => ({ x, score: (x.category === v.category ? 2 : 0) + (x.tags || []).filter((t) => (v.tags || []).includes(t)).length }))
@@ -268,13 +268,15 @@ function createSunsuTvApp(overrides = {}) {
     if (sub === 'reports' && m === 'GET') return sendJson(res, 200, { ok: true, reports: v.reports || [] });
     if (sub === 'thumb') {
       if (v.status !== 'ready' || !transcoder.available) throw err(400, transcoder.available ? '영상 변환이 끝난 뒤에 바꿀 수 있어요.' : 'ffmpeg 가 없어 썸네일을 만들 수 없어요.');
+      const auto = new URL(req.url, 'http://x').searchParams.get('auto') === '1';   // 화면이 AI 문구로 자동으로 만든 썸네일
+      if (auto && (v.customThumb || v.autoThumb)) return sendJson(res, 200, { ok: true, skipped: true, video: publicVideo(v) });   // 사람이 고른 썸네일은 덮어쓰지 않는다
       if (m === 'POST') { const b = await readJson(req), t = Number(b.t); if (!Number.isFinite(t) || t < 0 || t > (v.duration || 0)) throw err(400, '영상 길이 안의 시간을 골라 주세요.');
         if (!await transcoder.makeThumb(v.id, t)) throw err(500, '그 장면으로 썸네일을 만들지 못했어요.'); }
       else if (m === 'PUT') { if (!/^image\//.test(req.headers['content-type'] || '')) throw err(400, '사진 파일(JPG, PNG)을 올려 주세요.');
         const tmp = store.paths.incoming(v.id, '_thumb'); fs.writeFileSync(tmp, await readBody(req, 10 * 1024 * 1024));
         const okT = await transcoder.makeThumb(v.id, 0, tmp); fs.unlink(tmp, () => { }); if (!okT) throw err(400, '사진을 읽지 못했어요. JPG 나 PNG 로 올려 주세요.'); }
       else return fail(res, 405, '지원하지 않는 요청입니다.');
-      Object.assign(v, { thumb: true, customThumb: true, thumbVer: Date.now() }); store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
+      Object.assign(v, { thumb: true, thumbVer: Date.now(), ...(auto ? { autoThumb: true } : { customThumb: true }) }); store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
     }
     if (sub === 'trim' && m === 'POST') {
       if (v.status !== 'ready' || !transcoder.available) throw err(400, transcoder.available ? '영상 변환이 끝난 뒤에 자를 수 있어요.' : 'ffmpeg 가 없어 자를 수 없어요.');
@@ -293,6 +295,7 @@ function createSunsuTvApp(overrides = {}) {
         insight.enqueue(v.id, { force: true, stt: !!b.stt }); return sendJson(res, 200, { ok: true, insight: insightOf(v) });
       }
     }
+    if (sub === 'hooks' && m === 'POST') { try { return sendJson(res, 200, { ok: true, hooks: await insight.hooks(v) }); } catch (e) { throw err(400, e.message); } }   // 썸네일 문구 다시 만들기
     if (sub === 'subs' && m === 'PUT') {   // 자막 파일을 올려 대본으로 쓴다
       if (v.status !== 'ready') throw err(400, '영상 변환이 끝난 뒤에 할 수 있어요.');
       if (!insight.setSubs(v, (await readBody(req, 4 * 1024 * 1024)).toString('utf8'))) throw err(400, '자막을 읽지 못했어요. .srt 나 .vtt 파일을 올려 주세요.');
@@ -360,7 +363,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }

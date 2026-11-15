@@ -88,6 +88,15 @@ function createInsight(config, store, log = console.log) {
     return { summary, points: cleanPoints(points, duration) };
   }
 
+  // 썸네일에 얹을 문구: 누르고 싶게 짧고 강하게. 영상에 없는 내용은 쓰지 못하게 한다.
+  async function makeHooks(data, title) {
+    const body = [title ? `제목: ${title}` : '', data.summary ? `요약: ${data.summary}` : '', (data.points || []).length ? '핵심:\n' + data.points.map((p) => `- ${p.t}`).join('\n') : (data.transcript || []).map((x) => x.t).join(' ').slice(0, 2500)].filter(Boolean).join('\n');
+    const ans = await chat([{ role: 'system', content: '너는 영상 썸네일 문구를 쓰는 카피라이터다. 설명 없이 JSON 만 답한다.' },
+      { role: 'user', content: `아래 영상의 썸네일에 크게 넣을 문구 3개를 만들어라.\n\n조건:\n- 보는 사람이 궁금해서 누르고 싶게, 짧고 강하게 쓴다(공백 포함 16자 이내).\n- 질문, 숫자, 뜻밖의 사실, 경고, "이것만 알면" 같은 표현을 활용한다. 세 문구는 서로 다른 방식으로 쓴다.\n- 영상에 없는 내용, 거짓, 부풀린 말은 쓰지 않는다. 문구를 보고 기대한 내용이 영상에 실제로 있어야 한다.\n- 이모지, 따옴표, 마침표는 쓰지 않는다.\n\n답 형식(이 JSON 만): {"hooks":["...","...","..."]}\n\n${body}` }]);
+    const j = jsonOf(ans) || {};
+    return [...new Set((Array.isArray(j.hooks) ? j.hooks : []).map((h) => oneLine(String(h).replace(/["'“”‘’.]/g, ''), 26)).filter(Boolean))].slice(0, 5);
+  }
+
   async function transcribe(v) {
     const wav = store.paths.incoming(v.id, '_stt.wav'), out = store.paths.incoming(v.id, '_stt.json');
     try {
@@ -117,7 +126,9 @@ function createInsight(config, store, log = console.log) {
     write(v.id, data);
     if (data.edited && !opt.force) return mark(v, data, 'ready');   // 사람이 고친 핵심은 덮어쓰지 않는다
     if (!llmOn) return mark(v, data, 'ready', data.points.length ? '' : 'AI 가 연결되지 않아 대본만 만들었어요. 핵심 구간은 직접 고를 수 있어요.');
-    try { Object.assign(data, await pick(data.transcript, v.duration), { edited: false }); write(v.id, data); mark(v, data, 'ready', data.points.length ? '' : 'AI 가 핵심 구간을 고르지 못했어요.'); }
+    try { Object.assign(data, await pick(data.transcript, v.duration), { edited: false }); write(v.id, data);
+      try { data.hooks = await makeHooks(data, v.title); write(v.id, data); } catch { }   // 문구는 못 만들어도 핵심은 남긴다
+      mark(v, data, 'ready', data.points.length ? '' : 'AI 가 핵심 구간을 고르지 못했어요.'); }
     catch (e) { mark(v, data, 'ready', 'AI 가 핵심을 고르지 못했어요: ' + oneLine(e.message, 150)); }
   }
 
@@ -138,6 +149,8 @@ function createInsight(config, store, log = console.log) {
     reset(v) { try { fs.unlinkSync(file(v.id)); } catch { } texts.delete(v.id); mark(v, null, 'none'); },
     remove(id) { fs.unlink(file(id), () => { }); texts.delete(id); },
     // 사람이 고친 요약·핵심 구간을 저장
+    // 썸네일 문구를 (다시) 만든다
+    async hooks(v) { const data = read(v.id) || {}; if (!llmOn) throw new Error('AI 가 연결되지 않았어요.'); if (!data.summary && !(data.transcript || []).length) throw new Error('영상 내용(대본)이 아직 없어 문구를 만들 수 없어요.'); data.hooks = await makeHooks(data, v.title); write(v.id, data); return data.hooks; },
     edit(v, body) { const data = read(v.id) || { transcript: [], summary: '', points: [] }; data.summary = oneLine(body.summary, 400); data.points = cleanPoints(body.points, v.duration); data.edited = true; write(v.id, data); mark(v, data, 'ready'); return data; },
     setSubs(v, text) { const segs = parseSubs(text); if (!segs.length) return null; const data = read(v.id) || { summary: '', points: [], edited: false }; data.transcript = segs; data.fromFile = true; write(v.id, data); mark(v, data, v.insight || 'none'); return data; },
     // 검색용: 말한 내용 전체(소문자)
