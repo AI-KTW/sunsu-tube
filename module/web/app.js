@@ -98,44 +98,73 @@ async function playlistPage(id) {
   $('#plDel').onclick = async () => { if (confirm(`'${p.title}' 재생 목록을 지울까요? 영상은 지워지지 않아요.`)) { await api('api/playlists/' + id, { method: 'DELETE' }); location.hash = '#/playlists'; } };
 }
 
-/* ---------- 편집: 필요한 부분만 남기기. 남길 구간을 여러 개 고르면 그 부분만 이어 붙인다(나머지는 저장하지 않는다) ---------- */
+/* ---------- 편집실: 필요한 부분만 남기기. 타임라인에서 남길 구간을 고르면 그 부분만 이어 붙인다(나머지는 저장하지 않는다) ---------- */
 const tf = (t) => { const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
+const tp = (x) => { const a = String(x).trim().split(':').map(Number); return a.length && a.every((n) => Number.isFinite(n)) ? a.reduce((q, n) => q * 60 + n, 0) : NaN; };
 function rangeEditor({ src, title, points, initial }) {
   return new Promise((resolve) => {
-    const d = $('#dlg'); d.classList.add('wide');
-    d.innerHTML = `<h2>✂ 필요한 부분만 남기기</h2><p class="meta">${esc(title || '')}${title ? ' · ' : ''}영상을 보면서 남길 곳의 시작에서 "여기부터", 끝에서 "여기까지"를 누르세요. 여러 번 고를 수 있어요.</p>
-      <video id="edV" controls playsinline preload="metadata" src="${src}"></video><div id="edStrip" class="strip" title="파란 부분이 남는 구간"></div>
-      <div class="row" style="justify-content:flex-start;margin-top:10px"><button id="edIn" class="primary">▶ 여기부터</button><button id="edOut" class="primary">여기까지 ■</button><span id="edPend" class="meta"></span><span class="sp"></span>
-        ${points && points.length ? '<button id="edCore" class="small">⚡ 핵심 구간으로 채우기</button>' : ''}<button id="edClear" class="small">모두 지우기</button></div>
-      <div id="edList"></div><p id="edMsg" class="msg"></p>
-      <div class="row"><button id="edPrev">남길 부분만 미리 보기</button><span class="sp"></span><button id="edCancel" class="ghost">취소</button><button id="edOk" class="primary" disabled>이대로 남기기</button></div>`;
-    const V = $('#edV', d); let ranges = (initial || []).map((r) => ({ s: r.s, e: r.e })), pend = null, preview = false, settled = false;
-    const total = () => (Number.isFinite(V.duration) ? V.duration : 0);
-    const norm = () => { const out = []; for (const r of ranges.filter((x) => x.e > x.s + 0.3).sort((a, b) => a.s - b.s)) { const q = out[out.length - 1]; if (q && r.s <= q.e) q.e = Math.max(q.e, r.e); else out.push(r); } ranges = out; };
-    const draw = () => { norm(); const T = total(), keep = ranges.reduce((n, r) => n + r.e - r.s, 0), pc = (t) => (T ? t / T * 100 : 0);
-      $('#edStrip', d).innerHTML = ranges.map((r) => `<b style="left:${pc(r.s)}%;width:${pc(r.e - r.s)}%"></b>`).join('') + (pend != null ? `<u style="left:${pc(pend)}%"></u>` : '') + '<i id="edPos"></i>';
-      $('#edList', d).innerHTML = ranges.map((r, i) => `<div class="edrow"><b>${i + 1}</b><span>${tf(r.s)} ~ ${tf(r.e)}</span><span class="meta">${dur(r.e - r.s)}</span><span class="sp"></span><button class="small" data-go="${i}">보기</button><button class="small" data-del="${i}" title="이 구간 빼기">✕</button></div>`).join('');
-      $('#edMsg', d).className = 'msg'; $('#edMsg', d).textContent = ranges.length ? `남는 길이 ${dur(keep)} / 전체 ${dur(T)} · 고르지 않은 ${dur(Math.max(0, T - keep))} 는 저장하지 않아요.` : '아직 고른 구간이 없어요.';
-      $('#edPend', d).textContent = pend != null ? `시작 ${tf(pend)} 을 잡았어요. 끝나는 곳에서 "여기까지"를 누르세요.` : '';
-      $('#edOk', d).disabled = !ranges.length; $('#edPrev', d).disabled = !ranges.length; $('#edPrev', d).classList.toggle('on', preview);
-      $$('[data-go]', d).forEach((b) => b.onclick = () => { preview = false; V.currentTime = ranges[+b.dataset.go].s; V.play().catch(() => { }); draw(); });
-      $$('[data-del]', d).forEach((b) => b.onclick = () => { ranges.splice(+b.dataset.del, 1); if (!ranges.length) preview = false; draw(); }); };
+    const d = $('#dlg'); d.classList.add('studio');
+    d.innerHTML = `<div class="st-top"><b class="st-logo">✂ 편집실</b><span class="st-title">${esc(title || '')}</span><span class="sp"></span><span id="edMsg" class="msg"></span><button id="edCancel" class="ghost">취소</button><button id="edOk" class="primary" disabled>이대로 남기기</button></div>
+      <div class="st-main"><div class="st-stage"><video id="edV" playsinline preload="auto" src="${src}"></video></div>
+        <aside class="st-side"><header><b>남길 구간</b><span class="sp"></span>${points && points.length ? '<button id="edCore" class="small">⚡ 핵심으로 채우기</button>' : ''}<button id="edClear" class="small">비우기</button></header>
+          <div id="edList"></div><p class="st-help"><kbd>I</kbd> 여기부터 <kbd>O</kbd> 여기까지 <kbd>Space</kbd> 재생<br><kbd>←</kbd><kbd>→</kbd> 1초 <kbd>,</kbd><kbd>.</kbd> 한 장면 <kbd>Del</kbd> 구간 빼기</p></aside></div>
+      <div class="st-bar"><button id="edBack" title="5초 뒤로">−5초</button><button id="edFp" title="한 장면 뒤로 (,)">◂</button><button id="edPlay" class="play" title="재생 / 멈춤 (Space)">▶</button><button id="edFn" title="한 장면 앞으로 (.)">▸</button><button id="edFwd" title="5초 앞으로">+5초</button>
+        <span class="tc"><b id="edTc">0:00.0</b> / <span id="edDur">0:00.0</span></span><select id="edRate" title="재생 속도">${[0.5, 1, 1.5, 2, 4].map((r) => `<option value="${r}" ${r === 1 ? 'selected' : ''}>${r}배</option>`).join('')}</select><button id="edMute" title="소리">🔊</button>
+        <span class="sp"></span><button id="edIn" class="mark" title="지금 장면을 시작으로 (I)">[ 여기부터</button><button id="edOut" class="mark" title="지금 장면을 끝으로 (O)">여기까지 ]</button><button id="edPrev" title="남길 부분만 이어서 재생">남길 부분만 미리 보기</button></div>
+      <div class="st-time"><div id="edRuler" class="ruler"></div><div id="edStrip" class="track"><div id="edFilm" class="film"></div><div id="edRanges"></div><i id="edPos"></i></div></div>`;
+    const V = $('#edV', d), track = $('#edStrip', d); let ranges = (initial || []).map((r) => ({ s: r.s, e: r.e })), pend = null, preview = false, settled = false, sel = -1, drag = null, raf = 0;
+    const total = () => (Number.isFinite(V.duration) ? V.duration : 0), pc = (t) => (total() ? t / total() * 100 : 0);
+    const norm = () => { const out = []; for (const r of ranges.filter((x) => x.e > x.s + 0.3).sort((a, b) => a.s - b.s)) { const q = out[out.length - 1]; if (q && r.s <= q.e) q.e = Math.max(q.e, r.e); else out.push(r); } ranges = out; if (sel >= ranges.length) sel = -1; };
+    const drawRanges = () => { const T = total(); let h = '', prev = 0;
+      if (ranges.length) { for (const r of ranges) { if (r.s > prev) h += `<s style="left:${pc(prev)}%;width:${pc(r.s - prev)}%"></s>`; prev = r.e; } if (prev < T) h += `<s style="left:${pc(prev)}%;width:${pc(T - prev)}%"></s>`; }
+      h += ranges.map((r, i) => `<div class="rg ${i === sel ? 'sel' : ''}" data-i="${i}" style="left:${pc(r.s)}%;width:${pc(r.e - r.s)}%"><span class="h" data-edge="s"></span><em>${i + 1}</em><span class="h r" data-edge="e"></span></div>`).join('');
+      if (pend != null) h += `<u style="left:${pc(pend)}%"></u>`; $('#edRanges', d).innerHTML = h; };
+    const status = () => { const T = total(), keep = ranges.reduce((n, r) => n + r.e - r.s, 0); $('#edMsg', d).className = 'msg';
+      $('#edMsg', d).textContent = pend != null ? `시작 ${tf(pend)} 을 잡았어요. 끝나는 곳에서 "여기까지"를 누르세요.` : ranges.length ? `남는 길이 ${dur(keep)} / 전체 ${dur(T)} · 고르지 않은 ${dur(Math.max(0, T - keep))} 는 저장하지 않아요.` : '아직 고른 구간이 없어요.';
+      $('#edOk', d).disabled = !ranges.length; $('#edPrev', d).disabled = !ranges.length; $('#edPrev', d).classList.toggle('on', preview); $('#edIn', d).classList.toggle('on', pend != null); };
+    const drawList = () => { $('#edList', d).innerHTML = ranges.map((r, i) => `<div class="edrow ${i === sel ? 'sel' : ''}" data-i="${i}"><b>${i + 1}</b><input class="tcin" data-k="s" value="${tf(r.s)}" title="시작 (분:초)"><span>→</span><input class="tcin" data-k="e" value="${tf(r.e)}" title="끝 (분:초)"><span class="len">${dur(r.e - r.s)}</span><span class="sp"></span><button class="small" data-go="${i}" title="이 구간 보기">▶</button><button class="small" data-del="${i}" title="이 구간 빼기">✕</button></div>`).join('')
+        || '<p class="st-empty">영상을 보면서 남길 곳의 시작에서 <b>[ 여기부터</b>, 끝에서 <b>여기까지 ]</b> 를 누르세요. 여러 번 고를 수 있어요.</p>';
+      $$('#edList [data-go]', d).forEach((b) => b.onclick = () => { sel = +b.dataset.go; preview = false; V.currentTime = ranges[sel].s; V.play().catch(() => { }); draw(); });
+      $$('#edList [data-del]', d).forEach((b) => b.onclick = () => { ranges.splice(+b.dataset.del, 1); sel = -1; if (!ranges.length) preview = false; draw(); });
+      $$('#edList .tcin', d).forEach((inp) => inp.onchange = () => { const r = ranges[+inp.parentElement.dataset.i], t = tp(inp.value); if (Number.isFinite(t)) { r[inp.dataset.k] = Math.max(0, Math.min(total(), t)); if (r.e <= r.s + 0.3) { if (inp.dataset.k === 's') r.s = Math.max(0, r.e - 0.5); else r.e = Math.min(total(), r.s + 0.5); } norm(); } draw(); }); };
+    const draw = () => { drawRanges(); drawList(); status(); };
+    const ruler = () => { const T = total(), step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800].find((x) => T / x <= 12) || 3600; let h = ''; for (let t = 0; t <= T; t += step) h += `<span style="left:${pc(t)}%">${dur(t)}</span>`; $('#edRuler', d).innerHTML = h; $('#edDur', d).textContent = tf(T); };
+    const ev = (el, name) => new Promise((ok, no) => { const t = setTimeout(() => no(new Error('timeout')), 8000); el.addEventListener(name, () => { clearTimeout(t); ok(); }, { once: true }); el.addEventListener('error', () => { clearTimeout(t); no(new Error('error')); }, { once: true }); });
+    const film = async () => { const box = $('#edFilm', d), n = Math.max(6, Math.min(24, Math.round(box.clientWidth / 96))), tv = document.createElement('video'); tv.muted = true; tv.preload = 'auto'; tv.src = src;
+      try { await ev(tv, 'loadeddata'); for (let k = 0; k < n && !settled; k++) { tv.currentTime = (k + 0.5) / n * tv.duration; await ev(tv, 'seeked'); const c = document.createElement('canvas'); c.width = 160; c.height = 90; c.getContext('2d').drawImage(tv, 0, 0, 160, 90); box.appendChild(c); } } catch { } tv.removeAttribute('src'); tv.load(); };
     const warn = (t) => { $('#edMsg', d).className = 'msg bad'; $('#edMsg', d).textContent = t; };
-    const finish = (val) => { if (settled) return; settled = true; V.pause(); V.removeAttribute('src'); V.load(); d.classList.remove('wide'); if (d.open) d.close(); resolve(val); };
-    $('#edIn', d).onclick = () => { pend = V.currentTime; draw(); };
-    $('#edOut', d).onclick = () => { if (pend == null) return warn('먼저 시작하는 곳에서 "여기부터"를 눌러 주세요.'); if (V.currentTime <= pend + 0.3) return warn('끝이 시작보다 뒤여야 해요. 영상을 더 뒤로 옮긴 뒤 누르세요.'); ranges.push({ s: pend, e: V.currentTime }); pend = null; draw(); };
-    if ($('#edCore', d)) $('#edCore', d).onclick = () => { ranges = points.map((x) => ({ s: x.s, e: x.e })); pend = null; draw(); };
-    $('#edClear', d).onclick = () => { ranges = []; pend = null; preview = false; draw(); };
-    $('#edPrev', d).onclick = () => { preview = !preview; if (preview) { V.currentTime = ranges[0].s; V.play().catch(() => { }); } draw(); };
-    $('#edStrip', d).onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); V.currentTime = (e.clientX - r.left) / r.width * total(); };
-    V.addEventListener('timeupdate', () => { const t = V.currentTime, pos = $('#edPos', d); if (pos) pos.style.left = (total() ? t / total() * 100 : 0) + '%';
-      if (!preview || V.seeking || ranges.some((r) => t >= r.s - 0.05 && t < r.e)) return; const nx = ranges.find((r) => r.s > t); if (nx) V.currentTime = nx.s; else { V.pause(); preview = false; draw(); } });
-    V.addEventListener('loadedmetadata', draw);
+    const seek = (t) => { preview = false; V.currentTime = Math.max(0, Math.min(total(), t)); status(); };
+    const toggle = () => (V.paused ? V.play().catch(() => { }) : V.pause());
+    const markIn = () => { pend = V.currentTime; draw(); };
+    const markOut = () => { if (pend == null) return warn('먼저 시작하는 곳에서 "여기부터"를 눌러 주세요.'); if (V.currentTime <= pend + 0.3) return warn('끝이 시작보다 뒤여야 해요. 영상을 더 뒤로 옮긴 뒤 누르세요.'); const r = { s: pend, e: V.currentTime }; ranges.push(r); pend = null; norm(); sel = ranges.findIndex((x) => x.s <= r.s && x.e >= r.e); draw(); };
+    const togglePrev = () => { if (!ranges.length) return; preview = !preview; if (preview) { V.currentTime = ranges[0].s; V.play().catch(() => { }); } status(); };
+    const onKey = (e) => { if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return; const k = e.key.toLowerCase(), f = 1 / 30;
+      const map = { ' ': toggle, k: toggle, i: markIn, o: markOut, p: togglePrev, arrowleft: () => seek(V.currentTime - (e.shiftKey ? 5 : 1)), arrowright: () => seek(V.currentTime + (e.shiftKey ? 5 : 1)), ',': () => { V.pause(); seek(V.currentTime - f); }, '.': () => { V.pause(); seek(V.currentTime + f); },
+        delete: () => { if (sel >= 0) { ranges.splice(sel, 1); sel = -1; draw(); } }, backspace: () => { if (sel >= 0) { ranges.splice(sel, 1); sel = -1; draw(); } } };
+      if (map[k]) { e.preventDefault(); e.stopPropagation(); map[k](); } };
+    const finish = (val) => { if (settled) return; settled = true; cancelAnimationFrame(raf); d.removeEventListener('keydown', onKey); V.pause(); V.removeAttribute('src'); V.load(); d.classList.remove('studio'); if (d.open) d.close(); resolve(val); };
+    const tick = () => { if (settled) return; const t = V.currentTime; $('#edPos', d).style.left = pc(t) + '%'; $('#edTc', d).textContent = tf(t); $('#edPlay', d).textContent = V.paused ? '▶' : '❚❚';
+      if (preview && !V.seeking && !V.paused && !ranges.some((r) => t >= r.s - 0.05 && t < r.e)) { const nx = ranges.find((r) => r.s > t); if (nx) V.currentTime = nx.s; else { V.pause(); preview = false; status(); } }
+      raf = requestAnimationFrame(tick); };
+    // 타임라인: 누르거나 끌어서 위치 옮기기, 구간 양쪽 손잡이를 끌어 길이 조절
+    const move = (e) => { const b = track.getBoundingClientRect(), T = total(), t = Math.max(0, Math.min(T, (e.clientX - b.left) / b.width * T));
+      if (drag.scrub) { preview = false; V.currentTime = t; return; } const r = ranges[drag.i];
+      if (drag.edge === 's') r.s = Math.max(drag.i ? ranges[drag.i - 1].e : 0, Math.min(t, r.e - 0.5)); else r.e = Math.min(ranges[drag.i + 1] ? ranges[drag.i + 1].s : T, Math.max(t, r.s + 0.5));
+      V.currentTime = r[drag.edge]; draw(); };
+    track.onpointerdown = (e) => { if (!total()) return; const h = e.target.closest('.h'), rg = e.target.closest('.rg'); track.setPointerCapture(e.pointerId); V.pause();
+      if (h) { drag = { i: +rg.dataset.i, edge: h.dataset.edge }; sel = drag.i; } else { drag = { scrub: true }; sel = rg ? +rg.dataset.i : -1; draw(); } move(e); };
+    track.onpointermove = (e) => { if (drag) move(e); }; track.onpointerup = track.onpointercancel = () => { drag = null; };
+    $('#edIn', d).onclick = markIn; $('#edOut', d).onclick = markOut; $('#edPrev', d).onclick = togglePrev; $('#edPlay', d).onclick = toggle; V.onclick = toggle;
+    $('#edBack', d).onclick = () => seek(V.currentTime - 5); $('#edFwd', d).onclick = () => seek(V.currentTime + 5); $('#edFp', d).onclick = () => { V.pause(); seek(V.currentTime - 1 / 30); }; $('#edFn', d).onclick = () => { V.pause(); seek(V.currentTime + 1 / 30); };
+    $('#edRate', d).onchange = (e) => { V.playbackRate = +e.target.value; }; $('#edMute', d).onclick = () => { V.muted = !V.muted; $('#edMute', d).textContent = V.muted ? '🔇' : '🔊'; };
+    if ($('#edCore', d)) $('#edCore', d).onclick = () => { ranges = points.map((x) => ({ s: x.s, e: x.e })); pend = null; sel = -1; norm(); draw(); };
+    $('#edClear', d).onclick = () => { ranges = []; pend = null; preview = false; sel = -1; draw(); };
+    V.addEventListener('loadedmetadata', () => { ruler(); draw(); film(); });
     V.addEventListener('error', () => { warn('이 파일은 여기서 미리 볼 수 없어요. 그대로 올린 뒤 영상 화면의 "편집"에서 골라 주세요.'); $('#edIn', d).disabled = $('#edOut', d).disabled = true; });
     $('#edCancel', d).onclick = () => finish(null);
     $('#edOk', d).onclick = () => { norm(); finish(ranges.map((r) => ({ s: +r.s.toFixed(2), e: +r.e.toFixed(2) }))); };
-    d.addEventListener('close', () => finish(null), { once: true });
-    d.showModal(); draw();
+    d.addEventListener('close', () => finish(null), { once: true }); d.addEventListener('keydown', onKey);
+    d.showModal(); draw(); tick();
   });
 }
 
