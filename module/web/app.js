@@ -405,9 +405,9 @@ async function watch(id, params) {
     <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.kind === 'link' ? ' · 링크 영상' : ''}${isLive ? ' · 🔴 방송 중' : v.wasLive ? ' · 라이브 다시 보기' : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
     <div class="actions"><button id="like" class="${liked === 1 ? 'on' : ''}">👍 <b id="likes">${v.likes}</b></button><button id="dislike" class="${liked === -1 ? 'on' : ''}">👎 <b id="dislikes">${v.dislikes}</b></button>
       <button id="share">↗ 공유</button><button id="later" class="${later ? 'on' : ''}">⏰ ${later ? '담김' : '나중에 보기'}</button><button id="addPl">📚 재생 목록에 담기</button><span class="sp"></span>
-      <button id="capBtn" class="ghost" title="지금 장면을 사진으로 저장">📷 장면 캡처</button><a id="dlBtn" class="btn ghost" title="통신이 안 되는 곳에 가기 전에 받아 두세요">⬇ 내려받기</a><button id="edit" class="ghost">고치기</button><button id="trimBtn" class="ghost">✂ 편집</button>
-      <details class="more" id="tools"><summary>도구 ▾</summary><div class="menu"><button id="thumbBtn">🖼 썸네일</button><button id="blurBtn">▦ 가리기</button><button id="audioBtn">🔊 소리 정리</button><button id="mergeBtn">➕ 영상 합치기</button><button id="markBtn">🏷 로고 넣기</button>
-        <button id="attBtn">✋ 출석 ${v.attend ? `명단 (${v.attendCount})` : '받기'}</button><button id="statBtn">📊 시청 그래프</button><hr><button id="report">🚩 신고</button><button id="del">🗑 지우기</button></div></details></div>
+      <button id="capBtn" title="지금 장면을 사진으로 저장">📷 장면 캡처</button><a id="dlBtn" class="btn" title="통신이 안 되는 곳에 가기 전에 받아 두세요">⬇ 내려받기</a></div>
+    <div class="toolbar" id="tools"><div class="tgroup"><span class="tlabel">편집</span><button id="edit" title="제목·설명·분류·공개 범위">✎ 정보 고치기</button><button id="trimBtn" title="필요한 부분만 남기기">✂ 편집</button><button id="thumbBtn">🖼 썸네일</button><button id="blurBtn">▦ 가리기</button><button id="audioBtn">🔊 소리 정리</button><button id="mergeBtn">➕ 합치기</button><button id="markBtn">🏷 로고 넣기</button></div>
+      <div class="tgroup"><span class="tlabel">운영</span><button id="attBtn">✋ 출석 ${v.attend ? `명단 (${v.attendCount})` : '받기'}</button><button id="statBtn">📊 시청 그래프</button><button id="report">🚩 신고</button><button id="del" class="danger">🗑 지우기</button></div></div>
     ${v.note && v.status === 'ready' ? `<p class="msg bad">${esc(v.note)}</p>` : ''}
     ${v.desc || v.tags.length ? `<div class="desc">${esc(v.desc)}${v.tags.length ? (v.desc ? '\n' : '') + v.tags.map((t) => `<a class="tag" href="#/tag/${encodeURIComponent(t)}">#${esc(t)}</a>`).join('') : ''}</div>` : ''}
     <div class="comments"><h2>댓글 ${d.comments.length}개</h2>
@@ -575,8 +575,6 @@ async function watch(id, params) {
     try { await api(`api/videos/${id}/audio`, send('POST')); route(); } catch (e) { alert(e.message); } };
   if (P) { $('#dlBtn').href = src(quality) + (src(quality).includes('?') ? '&' : '?') + 'download=1'; $('#dlBtn').download = v.title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 80) + '.mp4'; } else $('#dlBtn').hidden = true;
   if (link) $('#statBtn').hidden = true;
-  $$('#tools .menu button').forEach((b) => b.addEventListener('click', () => { $('#tools').open = false; }));   // 메뉴에서 고르면 닫는다
-  document.addEventListener('click', (e) => { const t = $('#tools'); if (t && t.open && !t.contains(e.target)) t.open = false; }, { capture: true });
   /* 장면 캡처: 지금 보는 장면을 사진(PNG)으로 저장한다. 될 때는 복사도 해 둔다(붙여 넣기용) */
   if (!P) { $('#capBtn').hidden = true; $('#mergeBtn').hidden = true; $('#markBtn').hidden = true; }
   $('#capBtn').onclick = () => { const c = document.createElement('canvas'); c.width = P.videoWidth; c.height = P.videoHeight; if (!c.width) return toast('영상이 준비된 뒤에 눌러 주세요');

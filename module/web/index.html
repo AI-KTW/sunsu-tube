@@ -6,18 +6,19 @@
 <title>순수TV</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="pro.css">
 </head>
 <body>
 <header class="top">
   <a class="logo" href="#/"><span class="mark">▶</span> 순수TV</a>
   <nav id="side" class="nav">
-    <a href="#/" data-nav="home">홈</a>
+    <a href="#/" data-nav="home">🏠 홈</a>
     <a href="#/shorts" data-nav="shorts">⚡ 쇼츠</a>
-    <a href="#/popular" data-nav="popular">인기</a>
-    <a href="#/playlists" data-nav="playlists">재생 목록</a>
-    <a href="#/history" data-nav="history">시청 기록</a>
-    <a href="#/later" data-nav="later">나중에 볼 영상</a>
-    <a href="#/admin" data-nav="admin">관리</a>
+    <a href="#/popular" data-nav="popular">🔥 인기</a>
+    <a href="#/playlists" data-nav="playlists">📚 재생 목록</a>
+    <a href="#/history" data-nav="history">🕘 시청 기록</a>
+    <a href="#/later" data-nav="later">⏰ 나중에 볼 영상</a>
+    <a href="#/admin" data-nav="admin">⚙ 관리</a>
   </nav>
   <form id="searchForm" class="search"><input id="q" placeholder="제목이나 말한 내용으로 검색" autocomplete="off"><button title="찾기">🔍</button></form>
   <button id="liveTop" class="livebtn" title="지금 카메라로 방송하기">🔴 라이브</button>
@@ -44,6 +45,7 @@
 </dialog>
 <dialog id="dlg"></dialog>
 <div id="toast" hidden></div>
+<script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
