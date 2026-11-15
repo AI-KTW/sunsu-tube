@@ -30,7 +30,7 @@ function hasFfmpeg(ffmpeg) {
 const scaleTo = (n) => `scale='if(gt(iw,ih),-2,min(${n},iw))':'if(gt(iw,ih),min(${n},ih),-2)'`;
 const outArgs = (n, crf, abr) => ['-vf', scaleTo(n), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', abr, '-movflags', '+faststart'];
 
-function createTranscoder(config, store, log = console.log) {
+function createTranscoder(config, store, log = console.log, onDone = () => { }) {
   const queue = [];
   let busy = false;
   const available = hasFfmpeg(config.ffmpeg);
@@ -94,6 +94,7 @@ function createTranscoder(config, store, log = console.log) {
       try { if (job.type === 'trim') await trim(v, job.start, job.end); else await ingest(v, job.src); }
       catch (e) { Object.assign(v, { status: v.status === 'processing' && fs.existsSync(store.paths.media(v.id)) ? 'ready' : 'failed', note: String(e.message) }); }
       store.save();
+      if (v.status === 'ready') try { onDone(v, job.type); } catch (e) { log('[순수튜브] ' + e.message); }
     }
     busy = false;
   }

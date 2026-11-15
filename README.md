@@ -6,6 +6,13 @@
 ![보기](docs/watch.png)
 ![관리](docs/admin.png)
 
+## 핵심 보기
+영상의 말소리를 글로 바꾸고 AI 가 핵심 구간을 골라, **핵심만 이어서 보기**와 **핵심 내용 글**을 보여 준다. 추가 비용 없이 서버 안에서만 동작한다.
+
+- 음성 인식 켜기(서버에서 한 번): `bash module/tools/install_stt.sh`
+- AI 켜기: 환경변수 `SUNSUTUBE_LLM_URL=http://<AI 서버>/v1` (모델 이름은 `SUNSUTUBE_LLM_MODEL`, 기본 `Qwen3.6-35B-A3B-FP8`)
+- 꺼져 있어도 자막 파일(.srt/.vtt)을 올리거나 핵심 구간을 직접 고를 수 있다.
+
 ## 실행
 ```
 cd module

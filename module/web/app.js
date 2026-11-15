@@ -19,7 +19,7 @@ function card(v, opt = {}) {
   const badge = v.visibility === 'unlisted' ? '<span class="badge">링크로만</span>' : v.hidden ? '<span class="badge">숨김</span>' : '';
   return `<a class="card ${opt.cur ? 'cur' : ''}" href="#/v/${v.id}${opt.list ? '?list=' + opt.list : ''}">${opt.remove ? `<button class="x" data-remove="${v.id}" title="${opt.remove}">✕</button>` : ''}
     <div class="thumb" ${bg}>${st}${badge}${v.duration ? `<span class="dur">${dur(v.duration)}</span>` : ''}${prog}</div>
-    <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}</div></div></a>`;
+    <div><h3>${esc(v.title)}</h3><div class="meta">${esc(v.category)} · 조회수 ${v.views}회 · ${ago(v.created)}${v.coreSec ? ` · ⚡ 핵심 ${dur(v.coreSec)}` : ''}</div></div></a>`;
 }
 const grid = (videos, emptyTitle, emptySub, opt) => videos.length ? `<div class="grid">${videos.map((v) => card(v, opt)).join('')}</div>` : `<div class="empty"><b>${emptyTitle}</b>${emptySub || ''}</div>`;
 
@@ -84,8 +84,9 @@ async function watch(id, params) {
   const v = d.video, listId = params.get('list'); let pl = null;
   if (listId) try { pl = (await api('api/playlists/' + listId)).playlist; } catch { }
   const quality = v.low && ls.get('quality', '720') === '360' ? '360' : '720', src = (q) => `media/${v.id}${q === '360' ? '_360' : ''}.mp4`;
-  const player = v.status === 'ready' ? `<video id="player" controls autoplay playsinline src="${src(quality)}" ${v.thumb ? `poster="${thumbUrl(v)}"` : ''}></video>
-    <div class="pbar"><button class="small" id="back10" title="10초 뒤로 (J)">⏪ 10초</button><button class="small" id="fwd10" title="10초 앞으로 (L)">10초 ⏩</button>
+  const player = v.status === 'ready' ? `<video id="player" controls autoplay playsinline src="${src(quality)}" ${v.thumb ? `poster="${thumbUrl(v)}"` : ''}>${v.subs ? `<track kind="subtitles" srclang="ko" label="한국어" src="subs/${v.id}.vtt">` : ''}</video>
+    <div id="strip" class="strip" title="파란 부분이 핵심 구간이에요" hidden></div>
+    <div class="pbar"><button class="small" id="coreBtn" title="핵심 구간만 이어서 보기 (H)" hidden></button><button class="small" id="back10" title="10초 뒤로 (J)">⏪ 10초</button><button class="small" id="fwd10" title="10초 앞으로 (L)">10초 ⏩</button>
       <select id="speed" title="재생 속도 (&lt; &gt;)">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => `<option value="${s}">${s}배</option>`).join('')}</select>
       ${v.low ? `<select id="quality" title="화질"><option value="720">720p</option><option value="360">360p (느린 망)</option></select>` : ''}
       <span class="sp"></span><label><input type="checkbox" id="autoplay"> 자동 다음 영상</label><button class="small" id="theater" title="극장 모드 (T)">극장 모드</button><button class="small" id="pip" title="작은 창으로 보기">작은 창</button><button class="small" id="full" title="전체 화면 (F)">전체 화면</button></div>`
@@ -102,7 +103,7 @@ async function watch(id, params) {
     <div class="comments"><h2>댓글 ${d.comments.length}개</h2>
       <form class="cform" id="cform"><input id="ctext" maxlength="1000" placeholder="댓글 추가"><label class="meta" style="white-space:nowrap"><input type="checkbox" id="cat"> 지금 장면에</label><button class="primary">등록</button></form>
       <div id="clist">${comments(d.comments)}</div></div>
-    </section><aside class="side">${plBox}<h2>관련 영상</h2>${d.related.map((x) => card(x)).join('') || '<div class="meta">아직 없어요</div>'}</aside></div>`;
+    </section><aside class="side"><div id="core" class="corebox"></div>${plBox}<h2>관련 영상</h2>${d.related.map((x) => card(x)).join('') || '<div class="meta">아직 없어요</div>'}</aside></div>`;
   const P = $('#player');
   if (P) {
     // 시청 기록, 이어 보기, 공유 링크의 시작 시간
@@ -115,6 +116,9 @@ async function watch(id, params) {
       const i = pl ? pl.videos.findIndex((x) => x.id === v.id) : -1, next = pl && i >= 0 && pl.videos[i + 1] ? `#/v/${pl.videos[i + 1].id}?list=${pl.id}` : (!pl && ls.get('autoplay', true) && d.related[0] ? '#/v/' + d.related[0].id : null);
       if (next) { toast('다음 영상으로 넘어가요'); nextTimer = setTimeout(() => { location.hash = next; }, 1200); } });
     P.addEventListener('seeking', () => clearTimeout(nextTimer));   // 끝난 뒤 되감으면 넘어가지 않는다
+    P.addEventListener('timeupdate', () => { coreTick(); mark(); });
+    $('#coreBtn').onclick = () => setCore(!coreOn);
+    $('#strip').onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); jump((e.clientX - r.left) / r.width * total()); };
     $('#speed').value = String(ls.get('speed', 1)); $('#speed').onchange = (e) => { P.playbackRate = +e.target.value; ls.set('speed', +e.target.value); };
     if ($('#quality')) { $('#quality').value = quality; $('#quality').onchange = (e) => { const t = P.currentTime, paused = P.paused, rate = P.playbackRate; ls.set('quality', e.target.value); P.src = src(e.target.value); P.addEventListener('loadedmetadata', () => { P.currentTime = t; P.playbackRate = rate; if (!paused) P.play(); }, { once: true }); }; }
     const seek = (dt) => { P.currentTime = Math.max(0, Math.min(P.duration || 0, P.currentTime + dt)); };
@@ -125,10 +129,69 @@ async function watch(id, params) {
     const full = () => { if (document.fullscreenElement) document.exitFullscreen(); else P.requestFullscreen().catch(() => { }); }; $('#full').onclick = full;
     const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2], bump = (n) => { const i = Math.max(0, Math.min(speeds.length - 1, speeds.indexOf(P.playbackRate) + n)); P.playbackRate = speeds[i]; $('#speed').value = String(speeds[i]); ls.set('speed', speeds[i]); toast(speeds[i] + '배'); };
     keyHandler = (e) => { if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || $('dialog[open]')) return; const k = e.key.toLowerCase();
-      const map = { ' ': () => (P.paused ? P.play() : P.pause()), k: () => (P.paused ? P.play() : P.pause()), j: () => seek(-10), l: () => seek(10), arrowleft: () => seek(-5), arrowright: () => seek(5), f: full, t: () => $('#theater').click(), m: () => { P.muted = !P.muted; }, '<': () => bump(-1), '>': () => bump(1), ',': () => bump(-1), '.': () => bump(1) };
+      const map = { ' ': () => (P.paused ? P.play() : P.pause()), k: () => (P.paused ? P.play() : P.pause()), j: () => seek(-10), l: () => seek(10), arrowleft: () => seek(-5), arrowright: () => seek(5), f: full, t: () => $('#theater').click(), m: () => { P.muted = !P.muted; }, h: () => setCore(!coreOn), '<': () => bump(-1), '>': () => bump(1), ',': () => bump(-1), '.': () => bump(1) };
       if (map[k]) { e.preventDefault(); map[k](); } };
     document.addEventListener('keydown', keyHandler);
   } else if (v.status === 'processing') poll = setInterval(async () => { const r = await api('api/videos/' + id).catch(() => null); if (r && r.video.status !== 'processing') route(); }, 3000);
+
+  /* ----- 핵심 보기: 핵심 구간만 이어서 재생, 핵심 내용과 대본을 글로 ----- */
+  let ins = d.insight || { status: 'none', note: '', summary: '', points: [], transcript: [] }, coreOn = false, tab = 'core', editing = false, lastLine = -1;
+  const total = () => (P && P.duration) || v.duration || 0;
+  const inPt = (t) => ins.points.findIndex((p) => t >= p.s - 0.05 && t < p.e);
+  const coreTick = () => { if (!coreOn || P.seeking) return; const t = P.currentTime; if (inPt(t) >= 0) return; const nx = ins.points.find((p) => p.s > t);
+    if (nx) P.currentTime = nx.s; else { coreOn = false; $('#coreBtn').classList.remove('on'); P.pause(); toast('핵심을 다 봤어요'); } };
+  const setCore = (on) => { coreOn = !!on && ins.points.length > 0 && !!P; if ($('#coreBtn')) $('#coreBtn').classList.toggle('on', coreOn); if (!coreOn) return;
+    if (inPt(P.currentTime) < 0 && !ins.points.some((p) => p.s > P.currentTime)) P.currentTime = ins.points[0].s; else coreTick();
+    P.play().catch(() => { }); toast('핵심 구간만 이어서 보여 드려요'); };
+  const jump = (t) => { if (!P) return; if (coreOn && inPt(t) < 0) setCore(false); P.currentTime = Math.max(0, Math.min(total(), t)); P.play().catch(() => { }); };
+  const mark = () => { const t = P.currentTime, cur = inPt(t); if ($('#stripPos')) $('#stripPos').style.left = (total() ? t / total() * 100 : 0) + '%';
+    $$('#core .pt').forEach((a, i) => a.classList.toggle('cur', i === cur));
+    if (tab !== 'script' || editing) return; let i = -1; for (let k = 0; k < ins.transcript.length && ins.transcript[k].s <= t; k++) i = k;
+    if (i === lastLine) return; lastLine = i; const rows = $$('#core .ln'); rows.forEach((a) => a.classList.toggle('cur', +a.dataset.i === i));
+    const el = rows.find((a) => +a.dataset.i === i), box = $('#core .body'); if (el && box && !box.matches(':hover')) box.scrollTop = el.offsetTop - box.clientHeight / 2; };
+  const tfmt = (t) => { const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
+  const tparse = (x) => { const a = String(x).trim().split(':').map(Number); return a.length && a.every((n) => Number.isFinite(n)) ? a.reduce((p, n) => p * 60 + n, 0) : NaN; };
+  const ptRow = (p) => `<div class="ptrow"><input class="ps" value="${tfmt(p.s)}" title="시작 (분:초)"><button class="small" data-now="ps" title="지금 장면을 시작으로">지금</button><input class="pe" value="${tfmt(p.e)}" title="끝 (분:초)"><button class="small" data-now="pe" title="지금 장면을 끝으로">지금</button><button class="small" data-rm title="이 구간 빼기">✕</button><input class="ptx" maxlength="200" placeholder="이 구간의 핵심 내용" value="${esc(p.t)}"></div>`;
+  function renderCore() {
+    const box = $('#core'); if (!box) return;
+    const busy = ins.status === 'queued' || ins.status === 'working', has = ins.points.length, tr = ins.transcript.length, sec = ins.points.reduce((n, p) => n + p.e - p.s, 0);
+    if ($('#coreBtn')) { $('#coreBtn').hidden = !has; $('#coreBtn').textContent = `⚡ 핵심만 보기 (${dur(sec)})`; if (!has) coreOn = false; $('#coreBtn').classList.toggle('on', coreOn); }
+    if ($('#strip')) { $('#strip').hidden = !has; $('#strip').innerHTML = ins.points.map((p) => `<b style="left:${p.s / total() * 100}%;width:${(p.e - p.s) / total() * 100}%" title="${esc(p.t)}"></b>`).join('') + '<i id="stripPos"></i>'; }
+    if (editing) {
+      box.innerHTML = `<header><b>⚡ 핵심 고치기</b></header><div class="body"><label class="meta">한 줄 요약<textarea id="iSum" rows="2" maxlength="400">${esc(ins.summary)}</textarea></label>
+        <p class="meta">영상을 원하는 장면에 두고 "지금"을 누르면 그 시간이 들어가요.</p><div id="iPts">${ins.points.map(ptRow).join('')}</div><button id="iAdd" class="small">＋ 지금 장면부터 구간 추가</button><p id="iMsg" class="msg bad"></p></div>
+        <footer><span class="sp"></span><button id="iCancel" class="small ghost">취소</button><button id="iSave" class="small primary">저장</button></footer>`;
+      const bind = () => { $$('#iPts [data-rm]').forEach((b) => b.onclick = () => b.parentElement.remove()); $$('#iPts [data-now]').forEach((b) => b.onclick = () => { if (P) $('.' + b.dataset.now, b.parentElement).value = tfmt(P.currentTime); }); }; bind();
+      $('#iAdd').onclick = () => { const t = P ? P.currentTime : 0; $('#iPts').insertAdjacentHTML('beforeend', ptRow({ s: t, e: Math.min(total() || t + 10, t + 10), t: '' })); bind(); };
+      $('#iCancel').onclick = () => { editing = false; renderCore(); };
+      $('#iSave').onclick = async () => { const points = $$('#iPts .ptrow').map((r) => ({ s: tparse($('.ps', r).value), e: tparse($('.pe', r).value), t: $('.ptx', r).value }));
+        if (points.some((p) => !(p.e > p.s))) { $('#iMsg').textContent = '시간은 분:초 로 적고, 끝이 시작보다 뒤여야 해요. (예 1:30)'; return; }
+        try { ins = (await api(`api/videos/${id}/insight`, send('PUT', { summary: $('#iSum').value, points }))).insight; editing = false; tab = 'core'; renderCore(); toast('핵심을 저장했어요'); } catch (e) { $('#iMsg').textContent = e.message; } };
+      return;
+    }
+    if (!has && tr && tab === 'core' && !busy && !ins.summary) tab = 'script';
+    const core = (ins.summary ? `<p class="sum">${esc(ins.summary)}</p>` : '') + (has ? ins.points.map((p) => `<a class="pt" data-s="${p.s}"><span class="at">${dur(p.s)}</span>${esc(p.t) || '핵심 구간'} <span class="meta">${Math.max(1, Math.round(p.e - p.s))}초</span></a>`).join('')
+      : busy ? '' : `<p class="meta">${esc(ins.note) || '아직 핵심 구간이 없어요.'}</p>`) + (has && ins.note ? `<p class="meta">${esc(ins.note)}</p>` : '');
+    const script = `<input id="trQ" placeholder="대본에서 찾기" style="margin-bottom:6px">` + ins.transcript.map((x, i) => `<a class="ln ${inPt((x.s + x.e) / 2) >= 0 ? 'core' : ''}" data-i="${i}" data-s="${x.s}"><span class="at">${dur(x.s)}</span>${esc(x.t)}</a>`).join('');
+    box.innerHTML = `<header><b>⚡ 핵심 내용</b>${tr ? `<button class="small ${tab === 'core' ? 'on' : ''}" data-tab="core">핵심</button><button class="small ${tab === 'script' ? 'on' : ''}" data-tab="script">전체 대본</button>` : ''}</header>
+      <div class="body">${busy ? '<p class="meta">⏳ 말소리를 글로 바꾸고 핵심을 고르는 중이에요. 끝나면 여기에 나타나요.</p>' : ''}${tab === 'script' && tr ? script : core}</div>
+      <footer>${v.status === 'ready' ? `<button id="insEdit" class="small">${has ? '고치기' : '직접 고르기'}</button>${(tr ? meta.llm : meta.stt) && !busy ? `<button id="insRedo" class="small">${has ? 'AI로 다시 만들기' : 'AI로 핵심 만들기'}</button>` : ''}
+        <label class="small filebtn" title=".srt 또는 .vtt 자막 파일을 대본으로 써요"><input id="insSubs" type="file" accept=".srt,.vtt,text/vtt" hidden>자막 파일 올리기</label>` : ''}</footer>`;
+    lastLine = -1;
+    $$('#core [data-tab]').forEach((b) => b.onclick = () => { tab = b.dataset.tab; renderCore(); });
+    $$('#core [data-s]').forEach((a) => a.onclick = () => jump(+a.dataset.s));
+    if ($('#trQ')) $('#trQ').oninput = (e) => { const q = e.target.value.trim().toLowerCase(); $$('#core .ln').forEach((a) => { a.hidden = !!q && !a.textContent.toLowerCase().includes(q); }); };
+    if ($('#insEdit')) $('#insEdit').onclick = () => { editing = true; renderCore(); };
+    if ($('#insRedo')) $('#insRedo').onclick = async () => { if (ins.edited && !confirm('직접 고친 핵심이 지워지고 AI 가 새로 골라요. 계속할까요?')) return;
+      try { ins = (await api(`api/videos/${id}/insight`, send('POST', {}))).insight; renderCore(); watchInsight(); } catch (e) { toast(e.message); } };
+    if ($('#insSubs')) $('#insSubs').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
+      try { ins = (await api(`api/videos/${id}/subs`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: await f.text() })).insight; toast('자막을 대본으로 넣었어요'); renderCore(); watchInsight(); } catch (er) { toast(er.message); } };
+    if (P) mark();
+  }
+  function watchInsight() { if (!P || !['queued', 'working'].includes(ins.status)) return; clearInterval(poll);
+    poll = setInterval(async () => { const r = await api(`api/videos/${id}/insight`).catch(() => null); if (!r) return; const done = !['queued', 'working'].includes(r.insight.status);
+      if (done) { clearInterval(poll); poll = null; if (r.insight.points.length) toast('핵심을 뽑았어요'); } if (!editing && (done || r.insight.status !== ins.status)) { ins = r.insight; renderCore(); } }, 3000); }
+  renderCore(); watchInsight();
 
   const vote = async (kind) => { const map = ls.get('liked', {}), cur = map[v.id] || 0, want = kind === 'like' ? 1 : -1; let r;
     if (cur === want) { r = await api(`api/videos/${id}/${kind}`, send('POST', { undo: true })); delete map[v.id]; }
@@ -180,6 +243,8 @@ async function admin() {
   const pct = meta.totalBytes ? (1 - meta.freeBytes / meta.totalBytes) * 100 : 0;
   $('#view').innerHTML = `<h1 class="page">⚙ 관리</h1>
     <div class="box"><h2>저장 공간</h2>영상 ${meta.videos}개 · ${meta.hours.toFixed(1)}시간 · 영상이 쓰는 용량 ${gb(meta.usedBytes)}${meta.freeBytes != null ? ` · 디스크 ${gb(meta.totalBytes - meta.freeBytes)} / ${gb(meta.totalBytes)} 사용 (${gb(meta.freeBytes)} 남음)<div class="meter"><div class="${pct > 80 ? 'warn' : ''}" style="width:${pct.toFixed(0)}%"></div></div>` : ''}${meta.compress ? '' : '<p class="msg bad">ffmpeg 가 없어 영상을 줄이지 못하고 있어요. 서버에 ffmpeg 를 설치하세요.</p>'}</div>
+    <div class="box"><h2>핵심 뽑기</h2>말소리를 글로 바꾸기: <b>${meta.stt ? '켜짐' : '꺼짐'}</b> · AI 로 핵심 고르기: <b>${meta.llm ? '켜짐' : '꺼짐'}</b>
+      ${meta.stt ? '<div class="row" style="justify-content:flex-start;margin-top:8px"><button id="insAll" class="small">핵심이 없는 영상 모두 만들기</button></div>' : '<p class="meta">서버에서 tools/install_stt.sh 를 한 번 실행하면 켜져요. 꺼져 있어도 자막 파일을 올리거나 직접 고를 수 있어요.</p>'}${meta.llm ? '' : '<p class="meta">AI 는 서버 환경변수 SUNSUTUBE_LLM_URL 에 주소를 넣으면 켜져요.</p>'}</div>
     <div class="box"><h2>분류</h2><div id="cats">${meta.categories.map((c) => `<div class="catrow"><input value="${esc(c)}" data-old="${esc(c)}" maxlength="20"><button class="small" data-catdel>지우기</button></div>`).join('')}</div>
       <div class="row" style="justify-content:flex-start"><button id="catAdd" class="small">＋ 분류 추가</button><button id="catSave" class="small primary">분류 저장</button><span class="meta">이름을 바꾸면 영상도 따라 바뀌고, 지운 분류의 영상은 맨 아래 분류로 가요.</span></div></div>
     <div class="box"><h2>전체 영상</h2><div class="chips"><select id="aSort"><option value="new">최신순</option><option value="size">용량 큰 순</option><option value="views">조회순</option><option value="reports">신고 많은 순</option></select><span class="sp"></span><span id="selInfo" class="meta"></span><button id="bulkDel" disabled>고른 영상 지우기</button></div>
@@ -187,6 +252,7 @@ async function admin() {
       ${videos.map((v) => `<tr><td><input type="checkbox" data-sel="${v.id}" data-bytes="${v.bytes}"></td><td>${v.thumb ? `<img src="${thumbUrl(v)}" loading="lazy">` : ''}</td><td><a href="#/v/${v.id}"><b>${esc(v.title)}</b></a><div class="meta">${ago(v.created)}</div></td><td>${esc(v.category)}</td>
         <td class="num">${mb(v.bytes)}</td><td class="num">${dur(v.duration)}</td><td class="num">${v.views}</td><td class="num">${v.reports ? `<button class="small" data-reports="${v.id}">${v.reports}건</button>` : '0'}</td>
         <td>${v.status !== 'ready' ? (v.status === 'processing' ? '변환 중' : '실패') : v.hidden ? '숨김' : v.visibility === 'unlisted' ? '링크로만' : '공개'}</td><td><button class="small" data-hide="${v.id}" data-on="${v.hidden}">${v.hidden ? '숨김 풀기' : '숨기기'}</button></td></tr>`).join('') || '<tr><td colspan="10" class="meta">영상이 없어요</td></tr>'}</tbody></table></div>`;
+  if ($('#insAll')) $('#insAll').onclick = async () => { try { const r = await api('api/admin/insight', send('POST')); toast(r.queued ? `${r.queued}개를 줄 세웠어요` : '만들 영상이 없어요'); } catch (e) { alert(e.message); } };
   $('#aSort').value = sort; $('#aSort').onchange = (e) => { admin.sort = e.target.value; admin(); };
   const upd = () => { const sel = $$('[data-sel]:checked'); $('#bulkDel').disabled = !sel.length; $('#selInfo').textContent = sel.length ? `${sel.length}개 고름 · ${mb(sel.reduce((s, c) => s + +c.dataset.bytes, 0))}` : ''; };
   $$('[data-sel]').forEach((c) => c.onchange = upd); $('#selAll').onchange = (e) => { $$('[data-sel]').forEach((c) => { c.checked = e.target.checked; }); upd(); };
