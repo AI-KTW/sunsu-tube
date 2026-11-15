@@ -132,3 +132,9 @@ dialog.wide{width:min(1000px,96vw)}.thgrid{display:grid;grid-template-columns:mi
 .thcands{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}.thc{padding:0;border:2px solid transparent;border-radius:10px;overflow:hidden;background:#04121d;position:relative;line-height:0}
 .thc canvas{width:100%;aspect-ratio:16/9;display:block}.thc span{position:absolute;right:4px;bottom:4px;background:rgba(15,42,64,.82);color:#fff;border-radius:5px;padding:0 5px;font-size:11px;line-height:1.5}.thc.on{border-color:var(--accent);box-shadow:0 0 0 2px #bae6fd}
 .thhooks{display:flex;flex-wrap:wrap;gap:5px;margin:-4px 0 12px}.thhooks b{flex-basis:100%;font-size:12.5px;color:var(--accent2)}.thhooks button{border-radius:14px}
+
+/* 필독 · 겹치는 영상 · 시청 그래프 · 내려받기 */
+.thumb .badge.pin{background:#f59e0b;color:#111;font-weight:700}.actions a.btn{border-radius:20px;padding:7px 12px;background:transparent}
+.duprow{display:flex;gap:6px 14px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}.duprow a{flex:1 1 240px}.duprow a:hover{color:var(--accent2)}
+.chart{width:100%;height:auto;display:block;margin:6px 0}.chart text{font-size:11px;fill:var(--muted)}.chart .gl{stroke:var(--line);stroke-width:1}.chart .ar{fill:#bae6fd;opacity:.6}.chart .ln2{fill:none;stroke:var(--accent2);stroke-width:2.5;stroke-linejoin:round}
+.chart .dr{stroke:#dc2626;stroke-width:1.5;stroke-dasharray:4 3}.chart .hit{fill:transparent;cursor:pointer}.chart .hit:hover{fill:rgba(14,165,233,.14)}#stGo{cursor:pointer;font-weight:700}

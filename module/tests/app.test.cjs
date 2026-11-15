@@ -327,7 +327,7 @@ test('올린 영상에서 고른 구간만 남기고, 올릴 때 고른 구간�
     // 2) 올릴 때 구간을 골라 올림(이어 올리기)
     const buf = fs.readFileSync(sample(s.dataDir, 'b.mp4'));
     const init = await s.j('/api/uploads', J({ filename: 'b.mp4', size: buf.length, title: '골라 올림', keep: [{ s: 0.5, e: 1.5 }, { s: 1.2, e: 2 }, { s: 50, e: 60 }] }));
-    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: buf });
+    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0&dup=ok`, { method: 'PUT', body: buf });
     assert.equal(done.body.done, true);
     v = await s.waitReady(done.body.video.id);
     assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.2 && v.duration < 1.9, '길이 ' + v.duration);
@@ -380,7 +380,7 @@ test('가리기: 그린 곳만, 정한 시간에만 모자이크. 소리 정리:
     // 올릴 때 소리 정리 + 구간 남기기를 함께
     const buf = fs.readFileSync(sample(s.dataDir, 'c.mp4'));
     const init = await s.j('/api/uploads', J({ filename: 'c.mp4', size: buf.length, title: '정리해서 올림', clean: true, keep: [{ s: 0, e: 1 }, { s: 2, e: 3 }] }));
-    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: buf });
+    const done = await s.j(`/api/uploads/${init.body.uploadId}?offset=0&dup=ok`, { method: 'PUT', body: buf });
     v = await s.waitReady(done.body.video.id); assert.equal(v.status, 'ready'); assert.ok(v.duration > 1.7 && v.duration < 2.4); assert.equal(s.app.store.video(v.id).cleanAudio, undefined);
   } finally { await s.stop(); }
 });
@@ -412,5 +412,40 @@ test('링크 영상: 주소만 등록하고 영상은 저장하지 않는다(유
     assert.equal((await s.j(`/api/videos/${ids[0]}/comments`, J({ text: '좋아요' }))).status, 200);
     assert.equal((await s.j('/api/videos/' + ids[0], { method: 'DELETE' })).status, 200);
     assert.equal((await s.j('/api/meta')).body.videos, 9);
+  } finally { await s.stop(); }
+});
+
+/* ---------- 내려받기 · 시청 그래프 · 필독 · 겹치는 영상 ---------- */
+test('내려받기, 시청 그래프, 필독, 겹치는 영상 찾기', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body, method = 'POST') => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const id = await putVideo(s, '밸브/교체: 방법');
+    // 내려받기: 제목이 파일 이름
+    const dl = await fetch(`${s.base}/media/${id}.mp4?download=1`); assert.equal(dl.status, 200);
+    assert.equal(dl.headers.get('content-disposition'), `attachment; filename="video.mp4"; filename*=UTF-8''${encodeURIComponent('밸브 교체  방법.mp4')}`); await dl.arrayBuffer();
+    assert.equal((await fetch(`${s.base}/media/${id}.mp4`)).headers.get('content-disposition'), null);
+    // 시청 그래프: 두 사람이 봄. 한 명은 앞 절반만
+    await s.j(`/api/videos/${id}/watch`, J({ first: true, buckets: Array.from({ length: 40 }, (_, i) => i) }));
+    await s.j(`/api/videos/${id}/watch`, J({ first: true, buckets: Array.from({ length: 10 }, (_, i) => i) }));
+    await s.j(`/api/videos/${id}/watch`, J({ buckets: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 19, 99, -1, 'x'] }));
+    const st = (await s.j(`/api/videos/${id}/stats`)).body; assert.equal(st.sessions, 2); assert.equal(st.percent.length, 40); assert.equal(st.percent[0], 100); assert.equal(st.percent[19], 100); assert.equal(st.percent[20], 50); assert.equal(st.percent[39], 50);
+    // 필독
+    assert.equal((await s.j('/api/videos/' + id, J({ pinned: true }, 'PATCH'))).body.video.pinned, true); assert.equal((await s.j('/api/videos')).body.videos[0].pinned, true);
+    assert.equal((await s.j('/api/videos/' + id, J({ pinned: false }, 'PATCH'))).body.video.pinned, false);
+    // 겹치는 영상: 같은 파일을 다시 올리면 물어본다. 싫다면 지우고, 좋다면 마무리
+    const buf = fs.readFileSync(path.join(s.dataDir, 'in.mp4'));
+    let init = await s.j('/api/uploads', J({ filename: 'again.mp4', size: buf.length, title: '또 올림' }));
+    let r = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: buf });
+    assert.equal(r.body.done, false); assert.deepEqual(r.body.duplicate, { id, title: '밸브/교체: 방법' }); assert.equal(r.body.received, buf.length);
+    assert.equal((await s.j('/api/videos')).body.videos.length, 1, '물어보는 동안에는 등록하지 않는다');
+    r = await s.j(`/api/uploads/${init.body.uploadId}?offset=${buf.length}&dup=ok`, { method: 'PUT', body: '' });
+    assert.equal(r.body.done, true); const id2 = r.body.video.id; await s.waitReady(id2);
+    const g = (await s.j('/api/admin/duplicates')).body.groups; assert.equal(g.length, 1); assert.deepEqual(g[0].map((v) => v.id), [id, id2]);
+    // 다른 영상은 겹치지 않는다
+    const other = fs.readFileSync(sample(s.dataDir, 'other.mp4', '640x360'));
+    init = await s.j('/api/uploads', J({ filename: 'other.mp4', size: other.length, title: '다른 영상' }));
+    r = await s.j(`/api/uploads/${init.body.uploadId}?offset=0`, { method: 'PUT', body: other }); assert.equal(r.body.done, true); assert.equal(r.body.duplicate, undefined);
+    await s.waitReady(r.body.video.id);
   } finally { await s.stop(); }
 });

@@ -1,4 +1,5 @@
 const http = require('node:http');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
@@ -10,6 +11,7 @@ const { createInsight } = require('./insight.cjs');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8' };
 const ID = '[0-9a-f]{12}';
+const BUCKETS = 40;
 
 function sendJson(res, status, body) {
   const s = JSON.stringify(body);
@@ -52,7 +54,7 @@ function parseLink(u) {
 }
 
 // 파일을 Range 요청에 맞춰 보낸다(영상 건너뛰기용).
-async function sendFile(req, res, file, type, cache = 'no-cache') {
+async function sendFile(req, res, file, type, cache = 'no-cache', extra = {}) {
   let st;
   try { st = await fsp.stat(file); } catch { return false; }
   if (!st.isFile()) return false;
@@ -61,11 +63,11 @@ async function sendFile(req, res, file, type, cache = 'no-cache') {
     const start = range[1] === '' ? Math.max(0, st.size - Number(range[2])) : Number(range[1]);
     const end = range[1] !== '' && range[2] !== '' ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
     if (start >= st.size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); res.end(); return true; }
-    res.writeHead(206, { 'Content-Type': type, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Accept-Ranges': 'bytes', 'Cache-Control': cache });
+    res.writeHead(206, { 'Content-Type': type, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Accept-Ranges': 'bytes', 'Cache-Control': cache, ...extra });
     fs.createReadStream(file, { start, end }).pipe(res);
     return true;
   }
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes', 'Cache-Control': cache });
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes', 'Cache-Control': cache, ...extra });
   fs.createReadStream(file).pipe(res);
   return true;
 }
@@ -75,7 +77,7 @@ function createSunsuTvApp(overrides = {}) {
   const store = createStore(config.dataDir, { categories: config.categories });
   const insight = createInsight(config, store, overrides.log || console.log);
   // 변환이 끝나면 핵심을 뽑는다. 잘라낸 영상은 시간이 달라지므로 처음부터 다시.
-  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') insight.reset(v); if (type === 'trim' || type === 'ingest') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
+  const transcoder = createTranscoder(config, store, overrides.log || console.log, (v, type) => { if (type === 'trim') { insight.reset(v); delete v.watch; } if (type === 'trim' || type === 'ingest') insight.enqueue(v.id); });   // 가리기·소리 정리는 시간이 그대로라 핵심을 다시 만들지 않는다
   const { db } = store;
 
   // 서버가 꺼졌다 켜지면: 변환 중이던 영상을 다시 줄 세우고, 하루 넘은 올리다 만 파일을 치운다.
@@ -90,7 +92,7 @@ function createSunsuTvApp(overrides = {}) {
   const weekViews = (v) => { const d = v.viewDays || {}; let n = 0; for (let i = 0; i < 7; i++) n += d[new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)] || 0; return n; };
   const publicVideo = (v) => ({ id: v.id, title: v.title, desc: v.desc, category: v.category, tags: v.tags, created: v.created, status: v.status,
     duration: v.duration || 0, bytes: v.bytes || 0, views: v.views || 0, weekViews: weekViews(v), likes: v.likes || 0, dislikes: v.dislikes || 0, thumb: !!v.thumb, thumbVer: v.thumbVer || 0,
-    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
+    low: !!v.low, audioFixed: !!v.audioFixed, kind: v.kind || 'file', pinned: !!v.pinned, customThumb: !!v.customThumb, autoThumb: !!v.autoThumb, ...(v.link ? { link: v.link } : {}), visibility: v.visibility || 'public', hidden: !!v.hidden, reports: (v.reports || []).length, note: v.note || '', comments: store.commentsOf(v.id).length,
     insight: v.insight || 'none', insightNote: v.insightNote || '', subs: !!v.subs, points: v.points || 0, coreSec: v.coreSec || 0, summary: v.summary || '', pts: v.points ? insight.pointsOf(v.id).slice(0, 6) : [] });
   const listed = (v) => (v.visibility || 'public') === 'public' && !v.hidden;
 
@@ -138,6 +140,11 @@ function createSunsuTvApp(overrides = {}) {
     });
   }
 
+  // 겹치는 영상 찾기: 파일 앞 4MB 와 전체 크기로 지문을 만든다(같은 원본이면 같다).
+  const FP_BYTES = 4 * 1024 * 1024;
+  function fingerprint(file, size) { try { const fd = fs.openSync(file, 'r'), buf = Buffer.alloc(Math.min(FP_BYTES, size)); fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd); return crypto.createHash('sha1').update(buf).digest('hex') + ':' + size; } catch { return null; } }
+  const sameAs = (fp) => { const o = fp && db.videos.find((x) => x.fp === fp); return o ? { id: o.id, title: o.title } : null; };
+
   // 한 번에 올리기(작은 파일·시험용)
   async function uploadWhole(req, res, url) {
     const filename = url.searchParams.get('filename') || '';
@@ -145,7 +152,7 @@ function createSunsuTvApp(overrides = {}) {
     const id = store.newId(), dest = store.paths.incoming(id, ext);
     const n = await pipeToFile(req, dest, false, config.maxBytes);
     if (n <= 0) { fs.unlink(dest, () => { }); return fail(res, n === -1 ? 413 : 400, n === -1 ? '영상이 너무 커요.' : '올리기가 중간에 끊겼어요. 다시 시도해 주세요.'); }
-    const v = newVideo(id, Object.fromEntries(url.searchParams), n, dest);
+    const v = newVideo(id, Object.fromEntries(url.searchParams), n, dest); v.fp = fingerprint(dest, n);
     if (!v.title) { fs.unlink(dest, () => { }); return fail(res, 400, '제목을 적어 주세요.'); }
     db.videos.push(v); store.save(); transcoder.enqueue(id, dest);
     sendJson(res, 200, { ok: true, video: publicVideo(v) });
@@ -176,8 +183,11 @@ function createSunsuTvApp(overrides = {}) {
       if (n === -1) { fs.truncateSync(u.file, u.received); return fail(res, 413, '보낸 양이 파일 크기보다 커요.'); }
       u.received = actual; store.save();
       if (n === -2) return sendJson(res, 400, { ok: false, message: '조각이 중간에 끊겼어요.', received: u.received });
-      if (u.received < u.size) return sendJson(res, 200, { ok: true, received: u.received, done: false });
-      const v = newVideo(u.id, u.meta, u.size, u.file);
+      if (url.searchParams.get('dup') === 'ok') u.dupOk = true;   // 겹치는 줄 알고도 올리겠다고 함
+      if (!u.fp && u.received >= Math.min(FP_BYTES, u.size)) { u.fp = fingerprint(u.file, u.size); u.dup = sameAs(u.fp); }
+      const duplicate = u.dup && !u.dupOk && store.video(u.dup.id) ? u.dup : undefined;
+      if (u.received < u.size || duplicate) return sendJson(res, 200, { ok: true, received: u.received, done: false, duplicate });   // 겹치면 물어보고 나서 마무리한다
+      const v = newVideo(u.id, u.meta, u.size, u.file); v.fp = u.fp;
       if (!v.title) v.title = '제목 없음';
       db.uploads.splice(db.uploads.indexOf(u), 1); db.videos.push(v); store.save(); transcoder.enqueue(v.id, u.file);
       return sendJson(res, 200, { ok: true, received: u.size, done: true, video: publicVideo(v) });
@@ -253,11 +263,20 @@ function createSunsuTvApp(overrides = {}) {
         if (b.tags !== undefined) v.tags = tagsOf(b.tags);
         if (b.visibility === 'public' || b.visibility === 'unlisted') v.visibility = b.visibility;
         if (typeof b.hidden === 'boolean') v.hidden = b.hidden;
+        if (typeof b.pinned === 'boolean') { v.pinned = b.pinned; v.pinnedAt = b.pinned ? new Date().toISOString() : undefined; }   // 필독: 홈 맨 위에 고정
         if (b.clearReports) v.reports = [];
         store.save(); return sendJson(res, 200, { ok: true, video: publicVideo(v) });
       }
       if (m === 'DELETE') { removeVideo(v); store.save(); return sendJson(res, 200, { ok: true }); }
     }
+    if (sub === 'watch' && m === 'POST') {   // 어디를 봤는지: 영상을 40칸으로 나눠 본 칸을 센다
+      const b = await readJson(req), w = v.watch = v.watch || { n: 0, b: new Array(BUCKETS).fill(0) };
+      const seen = [...new Set((Array.isArray(b.buckets) ? b.buckets : []).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < BUCKETS))];
+      if (b.first && seen.length) w.n++; for (const i of seen) w.b[i]++;
+      store.save(); return sendJson(res, 200, { ok: true });
+    }
+    if (sub === 'stats' && m === 'GET') { const w = v.watch || { n: 0, b: new Array(BUCKETS).fill(0) };
+      return sendJson(res, 200, { ok: true, sessions: w.n, duration: v.duration || 0, views: v.views || 0, percent: w.b.map((c) => (w.n ? Math.min(100, Math.round(c / w.n * 100)) : 0)) }); }
     if (sub === 'view' && m === 'POST') { v.views = (v.views || 0) + 1; const d = v.viewDays = v.viewDays || {}; d[today()] = (d[today()] || 0) + 1; for (const k of Object.keys(d).sort().slice(0, -30)) delete d[k]; store.save(); return sendJson(res, 200, { ok: true, views: v.views }); }
     if ((sub === 'like' || sub === 'dislike') && m === 'POST') {
       const b = await readJson(req), key = sub === 'like' ? 'likes' : 'dislikes';
@@ -352,6 +371,10 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of db.videos) { if (rename[v.category] && next.includes(rename[v.category])) v.category = rename[v.category]; else if (!next.includes(v.category)) v.category = next[next.length - 1]; }
       db.categories.splice(0, db.categories.length, ...next); store.save(); return sendJson(res, 200, { ok: true, categories: db.categories });
     }
+    if (pathname === '/api/admin/duplicates' && m === 'GET') {   // 같은 원본으로 보이는 영상 묶음(먼저 올린 것이 앞)
+      const groups = new Map(); for (const v of db.videos) if (v.fp) groups.set(v.fp, [...(groups.get(v.fp) || []), v]);
+      return sendJson(res, 200, { ok: true, groups: [...groups.values()].filter((g) => g.length > 1).map((g) => g.sort((a, b) => a.created.localeCompare(b.created)).map(publicVideo)) });
+    }
     if (pathname === '/api/admin/delete' && m === 'POST') {
       const b = await readJson(req); let n = 0;
       for (const id of Array.isArray(b.ids) ? b.ids : []) { const v = store.video(id); if (v) { removeVideo(v); n++; } }
@@ -363,7 +386,7 @@ function createSunsuTvApp(overrides = {}) {
       for (const v of todo) insight.enqueue(v.id);
       return sendJson(res, 200, { ok: true, queued: todo.length });
     }
-    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
+    const vm = new RegExp(`^/api/videos/(${ID})(/(view|like|dislike|report|reports|thumb|trim|cut|blur|audio|insight|subs|hooks|watch|stats|comments)(/(${ID})(/(like))?)?)?$`).exec(pathname);
     if (vm) return videoApi(req, res, vm);
     return fail(res, 404, '없는 API 경로입니다.');
   }
@@ -374,7 +397,9 @@ function createSunsuTvApp(overrides = {}) {
     try {
       if (pathname.startsWith('/api/')) return await api(req, res, pathname, url);
       let m = new RegExp(`^/media/(${ID})(_360)?\\.mp4$`).exec(pathname);
-      if (m) { if (await sendFile(req, res, m[2] ? store.paths.mediaLow(m[1]) : store.paths.media(m[1]), 'video/mp4', 'private, max-age=3600')) return; return fail(res, 404, '영상 파일이 없어요.'); }
+      if (m) { const dv = url.searchParams.get('download') ? store.video(m[1]) : null;   // 내려받기: 제목을 파일 이름으로
+        const extra = dv ? { 'Content-Disposition': `attachment; filename="video.mp4"; filename*=UTF-8''${encodeURIComponent((dv.title || 'video').replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 80) + (m[2] ? ' (360p)' : '') + '.mp4')}` } : {};
+        if (await sendFile(req, res, m[2] ? store.paths.mediaLow(m[1]) : store.paths.media(m[1]), 'video/mp4', 'private, max-age=3600', extra)) return; return fail(res, 404, '영상 파일이 없어요.'); }
       m = new RegExp(`^/thumb/(${ID})\\.jpg$`).exec(pathname);
       if (m) { if (await sendFile(req, res, store.paths.thumb(m[1]), 'image/jpeg', 'private, max-age=86400')) return; return fail(res, 404, '썸네일이 없어요.'); }
       m = new RegExp(`^/subs/(${ID})\\.vtt$`).exec(pathname);
