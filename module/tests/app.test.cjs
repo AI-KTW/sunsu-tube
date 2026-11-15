@@ -528,3 +528,62 @@ test('라이브: 방송 화면이 그냥 닫히면 알아서 끝내고, 소리 �
     assert.match(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(s.dataDir, 'media', id + '.mp4')], { encoding: 'utf8' }).stdout, /audio/);
   } finally { await s.stop(); }
 });
+
+/* ---------- 출석 · 합치기 · 로고 넣기 ---------- */
+test('출석 체크: 켠 영상에서만 받고, 같은 사람은 한 번, 엑셀용 표로 받는다', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body, method = 'POST') => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const id = await putVideo(s, '안전 교육');
+    assert.equal((await s.j(`/api/videos/${id}/attend`, J({ name: '김철수' }))).status, 400, '꺼져 있으면 받지 않는다');
+    assert.equal((await s.j('/api/videos/' + id, J({ attend: true }, 'PATCH'))).body.video.attend, true);
+    assert.equal((await s.j(`/api/videos/${id}/attend`, J({ name: ' ', dept: '급수과' }))).status, 400);
+    assert.deepEqual((await s.j(`/api/videos/${id}/attend`, J({ name: '김철수', dept: '급수과', seen: 40 }))).body, { ok: true, count: 1, already: false });
+    assert.deepEqual((await s.j(`/api/videos/${id}/attend`, J({ name: '김철수', dept: '급수과', seen: 95 }))).body, { ok: true, count: 1, already: true });
+    await s.j(`/api/videos/${id}/attend`, J({ name: '이영희 "팀장"', dept: '시설과, 2팀' }));
+    const list = (await s.j(`/api/videos/${id}/attendance`)).body.attendance; assert.equal(list.length, 2); assert.equal(list[0].seen, 95, '더 많이 본 값으로');
+    assert.equal((await s.j('/api/videos/' + id)).body.video.attendCount, 2);
+    const csv = await fetch(`${s.base}/api/videos/${id}/attendance?csv=1`); assert.match(csv.headers.get('content-type'), /text\/csv/); assert.match(csv.headers.get('content-disposition'), /attachment/);
+    const text = Buffer.from(await csv.arrayBuffer()).toString('utf8'); assert.equal(text.charCodeAt(0), 0xFEFF, '엑셀이 한글을 읽도록');
+    const rows = text.slice(1).trim().split('\r\n'); assert.equal(rows[0], '"번호","이름","소속","출석 시각","본 비율(%)"'); assert.match(rows[1], /^"1","김철수","급수과","\d{4}-\d\d-\d\d \d\d:\d\d:\d\d","95"$/); assert.match(rows[2], /^"2","이영희 ""팀장""","시설과, 2팀",/);
+    await s.j(`/api/videos/${id}/attendance`, { method: 'DELETE' }); assert.equal((await s.j(`/api/videos/${id}/attendance`)).body.attendance.length, 0);
+  } finally { await s.stop(); }
+});
+test('영상 합치기: 크기가 다르거나 소리가 없어도 이어 붙여 새 영상을 만들고, 원하면 원래 영상을 지운다', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const a = await putVideo(s, '앞 영상');
+    const mute = path.join(s.dataDir, 'm.mp4'); spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=2:size=640x480:rate=25', '-c:v', 'libx264', mute]);
+    const up = await s.j('/api/upload?' + new URLSearchParams({ filename: 'm.mp4', title: '뒤 영상', tags: '합침' }), { method: 'PUT', body: fs.readFileSync(mute) }); const b = up.body.video.id; await s.waitReady(b);
+    assert.equal((await s.j('/api/merge', J({ ids: [a] }))).status, 400); assert.equal((await s.j('/api/merge', J({ ids: [a, '000000000000'] }))).status, 400);
+    const mg = await s.j('/api/merge', J({ ids: [a, b], remove: true })); assert.equal(mg.status, 200); assert.equal(mg.body.video.title, '앞 영상 + 뒤 영상'); assert.equal(mg.body.video.status, 'processing');
+    const v = await s.waitReady(mg.body.video.id); assert.equal(v.status, 'ready', v.note); assert.ok(v.duration > 4.5 && v.duration < 5.6, '3초 + 2초: ' + v.duration); assert.deepEqual(v.tags, ['합침']);
+    assert.equal(spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', path.join(s.dataDir, 'media', v.id + '.mp4')], { encoding: 'utf8' }).stdout.trim(), '1280,720', '첫 영상 크기에 맞춘다');
+    await new Promise((r) => setTimeout(r, 200)); assert.deepEqual((await s.j('/api/videos?all=1')).body.videos.map((x) => x.id), [v.id], '원래 영상은 지운다');
+    assert.deepEqual(fs.readdirSync(path.join(s.dataDir, 'incoming')), []);
+  } finally { await s.stop(); }
+});
+test('로고 넣기: 켜 두면 새 영상에 자동으로, 이미 올린 영상에는 버튼으로 한 번만', { skip: !hasFf }, async () => {
+  const s = await start({ sttCmd: null });
+  const J = (body, method = 'POST') => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const corner = (file) => [...spawnSync('ffmpeg', ['-v', 'error', '-ss', '1', '-i', file, '-frames:v', '1', '-vf', 'crop=120:60:1120:630,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']).stdout];
+  try {
+    const old = await putVideo(s, '로고 전'), oldFile = path.join(s.dataDir, 'media', old + '.mp4'), before = corner(oldFile);
+    assert.equal((await s.j('/api/watermark', J({ on: true }, 'PATCH'))).status, 400, '그림이 없으면 켤 수 없다'); assert.equal((await s.j(`/api/videos/${old}/mark`, J({}))).status, 400);
+    const png = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=400x200', '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-'], { maxBuffer: 1 << 24 }).stdout;
+    assert.equal((await s.j('/api/watermark', { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: 'x' })).status, 400);
+    const w = (await s.j('/api/watermark?pos=br&opacity=1&on=1', { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png })).body.watermark; assert.equal(w.on, true); assert.equal(w.has, true); assert.equal(w.pos, 'br');
+    assert.equal((await fetch(s.base + '/watermark.png')).status, 200); assert.equal((await s.j('/api/meta')).body.watermark.on, true);
+    // 이미 올린 영상: 버튼으로
+    assert.equal((await s.j(`/api/videos/${old}/mark`, J({}))).body.video.status, 'processing'); let v = await s.waitReady(old); assert.equal(v.marked, true); assert.equal(v.note, '');
+    const after = corner(oldFile); assert.ok(after[0] > 180 && after[1] < 90 && after[2] < 90, '오른쪽 아래에 빨간 로고: ' + after); assert.ok(Math.abs(before[0] - after[0]) + Math.abs(before[1] - after[1]) > 60);
+    assert.equal((await s.j(`/api/videos/${old}/mark`, J({}))).status, 400, '두 번 넣지 않는다');
+    // 새 영상: 자동으로
+    const neu = await s.j('/api/upload?' + new URLSearchParams({ filename: 'n.mp4', title: '로고 후' }), { method: 'PUT', body: fs.readFileSync(sample(s.dataDir, 'n.mp4', '1280x720')) }); v = await s.waitReady(neu.body.video.id);
+    assert.equal(v.marked, true); const c2 = corner(path.join(s.dataDir, 'media', v.id + '.mp4')); assert.ok(c2[0] > 180 && c2[1] < 90, '새 영상에도 로고: ' + c2);
+    // 끄면 넣지 않는다
+    await s.j('/api/watermark', J({ on: false }, 'PATCH')); const off = await s.j('/api/upload?' + new URLSearchParams({ filename: 'o.mp4', title: '로고 없음' }), { method: 'PUT', body: fs.readFileSync(sample(s.dataDir, 'o.mp4', '640x360')) });
+    assert.equal((await s.waitReady(off.body.video.id)).marked, false);
+  } finally { await s.stop(); }
+});

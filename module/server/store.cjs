@@ -28,7 +28,8 @@ function createStore(dataDir, defaults = {}) {
       media: (id) => path.join(dataDir, 'media', id + '.mp4'),
       mediaLow: (id) => path.join(dataDir, 'media', id + '_360.mp4'),
       thumb: (id) => path.join(dataDir, 'thumbs', id + '.jpg'),
-      insight: (id) => path.join(dataDir, 'insight', id + '.json')
+      insight: (id) => path.join(dataDir, 'insight', id + '.json'),
+      watermark: () => path.join(dataDir, 'watermark.png')
     }
   };
 }
