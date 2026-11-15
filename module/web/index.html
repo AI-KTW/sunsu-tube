@@ -10,19 +10,19 @@
 <body>
 <header class="top">
   <a class="logo" href="#/"><span class="mark">▶</span> 순수튜브</a>
-  <nav id="side" class="nav">
-    <a href="#/" data-nav="home">홈</a>
-    <a href="#/popular" data-nav="popular">인기</a>
-    <a href="#/playlists" data-nav="playlists">재생 목록</a>
-    <a href="#/history" data-nav="history">시청 기록</a>
-    <a href="#/later" data-nav="later">나중에 볼 영상</a>
-    <a href="#/admin" data-nav="admin">관리</a>
-  </nav>
-  <form id="searchForm" class="search"><input id="q" placeholder="제목이나 말한 내용으로 검색" autocomplete="off"><button title="찾기">🔍</button></form>
-  <button id="uploadBtn" class="primary">＋ 영상 올리기</button>
+  <form id="searchForm" class="search"><span>🔍</span><input id="q" placeholder="궁금한 걸 적어 보세요. 영상에서 한 말까지 찾아요" autocomplete="off"><button class="primary">찾기</button></form>
 </header>
 <main id="view"></main>
 <footer class="foot"><span id="disk"></span></footer>
+<nav id="side" class="nav dock">
+  <a href="#/" data-nav="home"><i>🏠</i>홈</a>
+  <a href="#/popular" data-nav="popular"><i>🔥</i>인기</a>
+  <a href="#/playlists" data-nav="playlists"><i>📚</i>목록</a>
+  <button id="uploadBtn" class="primary" title="영상 올리기">＋</button>
+  <a href="#/history" data-nav="history"><i>🕘</i>기록</a>
+  <a href="#/later" data-nav="later"><i>⏰</i>나중에</a>
+  <a href="#/admin" data-nav="admin"><i>⚙</i>관리</a>
+</nav>
 
 <dialog id="uploadDlg">
   <form id="uploadForm" method="dialog">
