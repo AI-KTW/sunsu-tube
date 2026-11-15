@@ -31,6 +31,17 @@ const scaleTo = (n) => `scale='if(gt(iw,ih),-2,min(${n},iw))':'if(gt(iw,ih),min(
 const codec = (crf, abr) => ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', abr, '-movflags', '+faststart'];
 const outArgs = (n, crf, abr) => ['-vf', scaleTo(n), ...codec(crf, abr)];
 
+// 소리 정리: 낮은 웅웅거림과 잡음을 줄이고, 소리 크기를 듣기 좋은 수준으로 맞춘다.
+const AUDIO_FIX = 'highpass=f=80,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11';
+
+// 가릴 네모 목록을 다듬는다: [{x,y,w,h(화면 대비 0~1), s,e(초)}]
+function cleanBoxes(list, duration = Infinity) {
+  const n = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d), c = (v) => Math.max(0, Math.min(1, v));
+  return (Array.isArray(list) ? list : []).slice(0, 20).map((b) => { const x = c(n(b.x, -1)), y = c(n(b.y, -1)), w = Math.min(1 - x, n(b.w, 0)), h = Math.min(1 - y, n(b.h, 0));
+    const s = Math.max(0, n(b.s, 0)), e = Math.min(duration === Infinity ? 1e7 : duration + 1, b.e == null ? 1e7 : n(b.e, 1e7));
+    return { x: +x.toFixed(4), y: +y.toFixed(4), w: +w.toFixed(4), h: +h.toFixed(4), s: +s.toFixed(2), e: +e.toFixed(2) }; }).filter((b) => b.w >= 0.01 && b.h >= 0.01 && b.e > b.s);
+}
+
 // 남길 구간 목록을 다듬는다: [{s,e}] → 시간순, 겹치면 합침, 영상 길이 안으로.
 function cleanRanges(list, duration = Infinity) {
   const out = [];
@@ -53,19 +64,31 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
     return r.code === 0 && fs.existsSync(out);
   }
 
-  // src 를 720p(+360p)로 만든다. ranges = [[시작, 끝], ...] 면 그 구간들만 이어 붙인다.
-  async function encode(v, src, ranges) {
+  // src 를 720p(+360p)로 만든다. opt.ranges = [[시작, 끝], ...] 면 그 구간들만 이어 붙이고,
+  // opt.boxes 면 그 네모 부분을 모자이크로 가리고, opt.clean 이면 소리를 정리한다.
+  async function encode(v, src, opt = {}) {
     const out = store.paths.media(v.id), low = store.paths.mediaLow(v.id);
     const info = probe(config.ffprobe, src), wantLow = Math.min(info.width, info.height) > 400;
+    const ranges = opt.ranges && opt.ranges.length ? opt.ranges : null, boxes = opt.boxes && opt.boxes.length && info.width ? opt.boxes : null, clean = opt.clean && info.audio;
     let args = ['-y', '-i', src, ...outArgs(720, 26, '96k'), out, ...(wantLow ? [...outArgs(360, 30, '64k'), low] : [])];
-    if (ranges && ranges.length) {
-      const f = [], au = info.audio;
-      ranges.forEach(([s, e], i) => { f.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[v${i}]`); if (au) f.push(`[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS[a${i}]`); });
-      f.push(ranges.map((_, i) => `[v${i}]${au ? `[a${i}]` : ''}`).join('') + `concat=n=${ranges.length}:v=1:a=${au ? 1 : 0}[vc]${au ? '[ac]' : ''}`);
-      if (wantLow) { f.push('[vc]split=2[vh][vl]', `[vh]${scaleTo(720)}[vo]`, `[vl]${scaleTo(360)}[vlo]`); if (au) f.push('[ac]asplit=2[ao][alo]'); }
-      else { f.push(`[vc]${scaleTo(720)}[vo]`); if (au) f.push('[ac]anull[ao]'); }
-      args = ['-y', '-i', src, '-filter_complex', f.join(';'), '-map', '[vo]', ...(au ? ['-map', '[ao]'] : []), ...codec(26, '96k'), out,
-        ...(wantLow ? ['-map', '[vlo]', ...(au ? ['-map', '[alo]'] : []), ...codec(30, '64k'), low] : [])];
+    if (ranges || boxes || clean) {
+      const f = []; let vl = '0:v', al = info.audio ? '0:a' : null;
+      if (ranges) {
+        ranges.forEach(([s, e], i) => { f.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[v${i}]`); if (al) f.push(`[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS[a${i}]`); });
+        f.push(ranges.map((_, i) => `[v${i}]${al ? `[a${i}]` : ''}`).join('') + `concat=n=${ranges.length}:v=1:a=${al ? 1 : 0}[vc]${al ? '[ac]' : ''}`);
+        vl = 'vc'; if (al) al = 'ac';
+      }
+      if (boxes) boxes.forEach((b, i) => {   // 네모를 잘라 작게 줄였다 키워(모자이크) 제자리에 덮는다
+        const even = (n) => Math.max(2, Math.round(n / 2) * 2), w = Math.min(even(b.w * info.width), even(info.width)), h = Math.min(even(b.h * info.height), even(info.height));
+        const x = Math.max(0, Math.min(info.width - w, Math.round(b.x * info.width))), y = Math.max(0, Math.min(info.height - h, Math.round(b.y * info.height)));
+        f.push(`[${vl}]split[bb${i}][bm${i}]`, `[bm${i}]crop=${w}:${h}:${x}:${y},scale=${Math.max(2, Math.round(w / 24))}:${Math.max(2, Math.round(h / 24))},scale=${w}:${h}:flags=neighbor[bc${i}]`,
+          `[bb${i}][bc${i}]overlay=${x}:${y}:enable='between(t,${b.s},${b.e})'[bo${i}]`); vl = `bo${i}`;
+      });
+      if (clean) { f.push(`[${al}]${AUDIO_FIX}[af]`); al = 'af'; }
+      const am = (label) => (al ? ['-map', al === '0:a' ? '0:a' : `[${label}]`] : []);
+      if (wantLow) { f.push(`[${vl}]split=2[vh][vq]`, `[vh]${scaleTo(720)}[vo]`, `[vq]${scaleTo(360)}[vlo]`); if (al && al !== '0:a') f.push(`[${al}]asplit=2[ao][alo]`); }
+      else { f.push(`[${vl}]${scaleTo(720)}[vo]`); if (al && al !== '0:a') f.push(`[${al}]anull[ao]`); }
+      args = ['-y', '-i', src, '-filter_complex', f.join(';'), '-map', '[vo]', ...am('ao'), ...codec(26, '96k'), out, ...(wantLow ? ['-map', '[vlo]', ...am('alo'), ...codec(30, '64k'), low] : [])];
     }
     const r = await run(config.ffmpeg, args);
     if (r.code !== 0 || !fs.existsSync(out)) {
@@ -84,8 +107,8 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
       delete v.incoming; return;
     }
     const keep = v.keep ? cleanRanges(v.keep, probe(config.ffprobe, src).duration || Infinity) : null;   // 올릴 때 고른 "남길 구간"
-    const r = await encode(v, src, keep);
-    delete v.keep;
+    const r = await encode(v, src, { ranges: keep, clean: !!v.cleanAudio });
+    delete v.keep; delete v.cleanAudio;
     if (!r.ok) { Object.assign(v, { status: 'failed', note: '영상을 변환하지 못했어요: ' + r.err }); return; }
     const thumb = await makeThumb(v.id, Math.min(3, r.duration * 0.1));
     Object.assign(v, { status: 'ready', duration: r.duration, bytes: r.bytes, low: r.low, thumb, thumbVer: Date.now(), note: '' });
@@ -93,14 +116,28 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
     try { fs.unlinkSync(src); } catch { }
   }
 
-  async function trim(v, ranges) {
+  // 저장된 영상을 다시 만든다(구간 남기기, 가리기). 실패하면 원래 영상으로 되돌린다.
+  async function trim(v, opt) {
     const cur = store.paths.media(v.id), tmp = store.paths.incoming(v.id, '_trim.mp4');
     fs.renameSync(cur, tmp);
-    const r = await encode(v, tmp, ranges);
-    if (!r.ok) { fs.renameSync(tmp, cur); Object.assign(v, { status: 'ready', note: '잘라내지 못했어요: ' + r.err }); return; }
+    const r = await encode(v, tmp, opt);
+    if (!r.ok) { fs.renameSync(tmp, cur); Object.assign(v, { status: 'ready', note: '편집하지 못했어요: ' + r.err }); return; }
     if (!v.customThumb) await makeThumb(v.id, Math.min(3, r.duration * 0.1));
     Object.assign(v, { status: 'ready', duration: r.duration, bytes: r.bytes, low: r.low, thumbVer: Date.now(), note: '' });
     try { fs.unlinkSync(tmp); } catch { }
+  }
+
+  // 소리만 정리한다(화면은 그대로 복사해서 빠르고 화질이 그대로다).
+  async function fixAudio(v) {
+    for (const f of [store.paths.media(v.id), store.paths.mediaLow(v.id)]) {
+      if (!fs.existsSync(f)) continue;
+      if (!probe(config.ffprobe, f).audio) { Object.assign(v, { status: 'ready', note: '소리가 없는 영상이에요.' }); return; }
+      const tmp = f + '.fix.mp4', r = await run(config.ffmpeg, ['-y', '-i', f, '-c:v', 'copy', '-af', AUDIO_FIX, '-c:a', 'aac', '-b:a', f.endsWith('_360.mp4') ? '64k' : '96k', '-movflags', '+faststart', tmp]);
+      if (r.code !== 0 || !fs.existsSync(tmp)) { try { fs.unlinkSync(tmp); } catch { } Object.assign(v, { status: 'ready', note: '소리를 정리하지 못했어요: ' + (r.err.split('\n').filter(Boolean).pop() || '') }); return; }
+      fs.renameSync(tmp, f);
+    }
+    const lowF = store.paths.mediaLow(v.id);
+    Object.assign(v, { status: 'ready', note: '', audioFixed: true, thumbVer: Date.now(), bytes: fs.statSync(store.paths.media(v.id)).size + (fs.existsSync(lowF) ? fs.statSync(lowF).size : 0) });
   }
 
   async function pump() {
@@ -110,7 +147,7 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
       const job = queue.shift();
       const v = store.video(job.id);
       if (!v) { if (job.src) try { fs.unlinkSync(job.src); } catch { } continue; }
-      try { if (job.type === 'trim') await trim(v, job.ranges); else await ingest(v, job.src); }
+      try { if (job.type === 'trim') await trim(v, { ranges: job.ranges }); else if (job.type === 'blur') await trim(v, { boxes: job.boxes }); else if (job.type === 'audio') await fixAudio(v); else await ingest(v, job.src); }
       catch (e) { Object.assign(v, { status: v.status === 'processing' && fs.existsSync(store.paths.media(v.id)) ? 'ready' : 'failed', note: String(e.message) }); }
       store.save();
       if (v.status === 'ready') try { onDone(v, job.type); } catch (e) { log('[순수TV] ' + e.message); }
@@ -123,8 +160,10 @@ function createTranscoder(config, store, log = console.log, onDone = () => { }) 
     enqueue(id, src) { queue.push({ type: 'ingest', id, src }); pump(); },
     enqueueTrim(id, start, end) { queue.push({ type: 'trim', id, ranges: [[start, end]] }); pump(); },
     enqueueCut(id, ranges) { queue.push({ type: 'trim', id, ranges }); pump(); },
+    enqueueBlur(id, boxes) { queue.push({ type: 'blur', id, boxes }); pump(); },
+    enqueueAudio(id) { queue.push({ type: 'audio', id }); pump(); },
     idle: () => !busy && queue.length === 0
   };
 }
 
-module.exports = { createTranscoder, probe, hasFfmpeg, cleanRanges };
+module.exports = { createTranscoder, probe, hasFfmpeg, cleanRanges, cleanBoxes };

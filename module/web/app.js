@@ -34,7 +34,7 @@ async function shelves() {
   const later = h && ls.get('later', []).includes(h.id);
   // 큰 화면: 가로 끝까지 16:9. 영상이 소리 없이 흐르고, 설명은 화면 오른쪽 위에 자막처럼 얹는다.
   const hero = h ? `<section class="hero"><a class="scr" href="#/v/${h.id}" ${h.thumb ? `style="background-image:url('${thumbUrl(h)}')"` : ''}>
-      <video id="heroVid" muted loop playsinline preload="metadata" src="media/${h.id}${h.low ? '_360' : ''}.mp4#t=${h.pts && h.pts[0] ? Math.floor(h.pts[0].s) : 0}"></video></a>
+      <video id="heroVid" muted loop playsinline preload="metadata" src="media/${h.id}${h.low ? '_360' : ''}.mp4?v=${h.thumbVer || 0}#t=${h.pts && h.pts[0] ? Math.floor(h.pts[0].s) : 0}"></video></a>
     <div class="cap"><span class="kicker">${pop[0] ? '이번 주 가장 많이 본 영상' : '새로 올라온 영상'}</span><h1>${esc(h.title)}</h1>
       ${h.summary || h.desc ? `<p>${esc(h.summary || h.desc)}</p>` : ''}<div class="info">${esc(h.category)} · 조회수 ${h.views}회 · ${ago(h.created)} · ${dur(h.duration)}</div>
       <div class="btns"><a class="btn primary" href="#/v/${h.id}">▶ 재생</a>${h.coreSec ? `<a class="btn" href="#/v/${h.id}?core=1">⚡ 핵심만 보기 (${dur(h.coreSec)})</a>` : ''}<button id="heroLater" class="btn ${later ? 'on' : ''}">${later ? '✓ 담김' : '＋ 나중에 보기'}</button></div></div></section>` : '';
@@ -101,6 +101,8 @@ async function playlistPage(id) {
 /* ---------- 편집실: 필요한 부분만 남기기. 타임라인에서 남길 구간을 고르면 그 부분만 이어 붙인다(나머지는 저장하지 않는다) ---------- */
 const tf = (t) => { const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
 const tp = (x) => { const a = String(x).trim().split(':').map(Number); return a.length && a.every((n) => Number.isFinite(n)) ? a.reduce((q, n) => q * 60 + n, 0) : NaN; };
+const whenDur = (V) => new Promise((ok) => { const go = () => { if (Number.isFinite(V.duration)) return ok(); const h = () => { if (Number.isFinite(V.duration)) { V.removeEventListener('durationchange', h); V.currentTime = 0; ok(); } }; V.addEventListener('durationchange', h); V.currentTime = 1e101; };
+  if (V.readyState >= 1) go(); else V.addEventListener('loadedmetadata', go, { once: true }); });
 function rangeEditor({ src, title, points, initial }) {
   return new Promise((resolve) => {
     const d = $('#dlg'); d.classList.add('studio');
@@ -131,7 +133,7 @@ function rangeEditor({ src, title, points, initial }) {
     const ruler = () => { const T = total(), step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800].find((x) => T / x <= 12) || 3600; let h = ''; for (let t = 0; t <= T; t += step) h += `<span style="left:${pc(t)}%">${dur(t)}</span>`; $('#edRuler', d).innerHTML = h; $('#edDur', d).textContent = tf(T); };
     const ev = (el, name) => new Promise((ok, no) => { const t = setTimeout(() => no(new Error('timeout')), 8000); el.addEventListener(name, () => { clearTimeout(t); ok(); }, { once: true }); el.addEventListener('error', () => { clearTimeout(t); no(new Error('error')); }, { once: true }); });
     const film = async () => { const box = $('#edFilm', d), n = Math.max(6, Math.min(24, Math.round(box.clientWidth / 96))), tv = document.createElement('video'); tv.muted = true; tv.preload = 'auto'; tv.src = src;
-      try { await ev(tv, 'loadeddata'); for (let k = 0; k < n && !settled; k++) { tv.currentTime = (k + 0.5) / n * tv.duration; await ev(tv, 'seeked'); const c = document.createElement('canvas'); c.width = 160; c.height = 90; c.getContext('2d').drawImage(tv, 0, 0, 160, 90); box.appendChild(c); } } catch { } tv.removeAttribute('src'); tv.load(); };
+      try { await ev(tv, 'loadeddata'); for (let k = 0; k < n && !settled; k++) { tv.currentTime = (k + 0.5) / n * total(); await ev(tv, 'seeked'); const c = document.createElement('canvas'); c.width = 160; c.height = 90; c.getContext('2d').drawImage(tv, 0, 0, 160, 90); box.appendChild(c); } } catch { } tv.removeAttribute('src'); tv.load(); };
     const warn = (t) => { $('#edMsg', d).className = 'msg bad'; $('#edMsg', d).textContent = t; };
     const seek = (t) => { preview = false; V.currentTime = Math.max(0, Math.min(total(), t)); status(); };
     const toggle = () => (V.paused ? V.play().catch(() => { }) : V.pause());
@@ -159,12 +161,59 @@ function rangeEditor({ src, title, points, initial }) {
     $('#edRate', d).onchange = (e) => { V.playbackRate = +e.target.value; }; $('#edMute', d).onclick = () => { V.muted = !V.muted; $('#edMute', d).textContent = V.muted ? '🔇' : '🔊'; };
     if ($('#edCore', d)) $('#edCore', d).onclick = () => { ranges = points.map((x) => ({ s: x.s, e: x.e })); pend = null; sel = -1; norm(); draw(); };
     $('#edClear', d).onclick = () => { ranges = []; pend = null; preview = false; sel = -1; draw(); };
-    V.addEventListener('loadedmetadata', () => { ruler(); draw(); film(); });
+    whenDur(V).then(() => { if (!settled) { ruler(); draw(); film(); } });
     V.addEventListener('error', () => { warn('이 파일은 여기서 미리 볼 수 없어요. 그대로 올린 뒤 영상 화면의 "편집"에서 골라 주세요.'); $('#edIn', d).disabled = $('#edOut', d).disabled = true; });
     $('#edCancel', d).onclick = () => finish(null);
     $('#edOk', d).onclick = () => { norm(); finish(ranges.map((r) => ({ s: +r.s.toFixed(2), e: +r.e.toFixed(2) }))); };
     d.addEventListener('close', () => finish(null), { once: true }); d.addEventListener('keydown', onKey);
     d.showModal(); draw(); tick();
+  });
+}
+
+/* ---------- 가리기: 화면 위에 네모를 그려 그 부분을 모자이크로 가린다(얼굴, 번호판, 개인정보) ---------- */
+function blurEditor({ src, title }) {
+  return new Promise((resolve) => {
+    const d = $('#dlg'); d.classList.add('studio');
+    d.innerHTML = `<div class="st-top"><b class="st-logo">▦ 가리기</b><span class="st-title">${esc(title || '')}</span><span class="sp"></span><span id="blMsg" class="msg"></span><button id="blCancel" class="ghost">취소</button><button id="blOk" class="primary" disabled>이대로 가리기</button></div>
+      <div class="st-main"><div class="st-stage" id="blStage"><div id="blWrap" class="bl-wrap"><video id="blV" playsinline preload="auto" src="${src}"></video><div id="blLayer" class="bl-layer"></div></div></div>
+        <aside class="st-side"><header><b>가릴 곳</b><span class="sp"></span><button id="blClear" class="small">비우기</button></header><div id="blList"></div>
+          <p class="st-help">화면 위에서 마우스로 끌어 네모를 그리세요.<br>네모를 끌면 옮겨지고, 가릴 시간도 정할 수 있어요.</p></aside></div>
+      <div class="st-bar"><button id="blPlay" class="play" title="재생 / 멈춤 (Space)">▶</button><span class="tc"><b id="blTc">0:00.0</b> / <span id="blDur">0:00.0</span></span><input id="blSeek" type="range" min="0" max="1000" value="0"></div>`;
+    const V = $('#blV', d), layer = $('#blLayer', d), wrap = $('#blWrap', d); let boxes = [], sel = -1, drag = null, settled = false, raf = 0, seeking = false;
+    const total = () => (Number.isFinite(V.duration) ? V.duration : 0), on = (b, t) => t >= b.s && (b.e == null || t <= b.e);
+    const fit = () => { const st = $('#blStage', d).getBoundingClientRect(), a = (V.videoWidth || 16) / (V.videoHeight || 9), w = Math.min(st.width - 28, (st.height - 28) * a); wrap.style.width = w + 'px'; wrap.style.height = w / a + 'px'; };
+    const drawBoxes = () => { const t = V.currentTime; layer.innerHTML = boxes.map((b, i) => `<div class="bx ${i === sel ? 'sel' : ''} ${on(b, t) ? '' : 'off'}" data-i="${i}" style="left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%"><em>${i + 1}</em></div>`).join(''); };
+    const drawList = () => { $('#blList', d).innerHTML = boxes.map((b, i) => `<div class="edrow blrow ${i === sel ? 'sel' : ''}" data-i="${i}"><b>${i + 1}</b><span class="when">${b.s === 0 && b.e == null ? '영상 전체' : `${tf(b.s)} → ${b.e == null ? '끝' : tf(b.e)}`}</span><span class="sp"></span>
+        <button class="small" data-k="s" title="지금 장면부터 가리기">여기부터</button><button class="small" data-k="e" title="지금 장면까지 가리기">여기까지</button><button class="small" data-k="all" title="영상 전체에서 가리기">전체</button><button class="small" data-k="del" title="빼기">✕</button></div>`).join('')
+        || '<p class="st-empty">가리고 싶은 곳(얼굴, 번호판, 화면 속 개인정보)을 <b>화면 위에서 끌어</b> 네모로 표시하세요.</p>';
+      $$('#blList [data-k]', d).forEach((bt) => bt.onclick = () => { const i = +bt.parentElement.dataset.i, b = boxes[i], k = bt.dataset.k, t = +V.currentTime.toFixed(2); sel = i;
+        if (k === 'del') { boxes.splice(i, 1); sel = -1; } else if (k === 'all') { b.s = 0; b.e = null; } else if (k === 's') { b.s = t; if (b.e != null && b.e <= t) b.e = null; } else { if (t <= b.s) { b.s = 0; } b.e = t; }
+        draw(); });
+      $('#blMsg', d).className = 'msg'; $('#blMsg', d).textContent = boxes.length ? `${boxes.length}곳을 모자이크로 가려요. 적용하면 되돌릴 수 없어요.` : '아직 그린 곳이 없어요.'; $('#blOk', d).disabled = !boxes.length; };
+    const draw = () => { drawBoxes(); drawList(); };
+    const at = (e) => { const r = layer.getBoundingClientRect(); return [Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))]; };
+    layer.onpointerdown = (e) => { const bx = e.target.closest('.bx'), [x, y] = at(e); layer.setPointerCapture(e.pointerId); V.pause();
+      if (bx) { sel = +bx.dataset.i; const b = boxes[sel]; drag = { move: true, dx: x - b.x, dy: y - b.y }; } else { boxes.push({ x, y, w: 0, h: 0, s: 0, e: null }); sel = boxes.length - 1; drag = { x0: x, y0: y }; } draw(); };
+    layer.onpointermove = (e) => { if (!drag) return; const [x, y] = at(e), b = boxes[sel];
+      if (drag.move) { b.x = Math.max(0, Math.min(1 - b.w, x - drag.dx)); b.y = Math.max(0, Math.min(1 - b.h, y - drag.dy)); } else { b.x = Math.min(x, drag.x0); b.y = Math.min(y, drag.y0); b.w = Math.abs(x - drag.x0); b.h = Math.abs(y - drag.y0); } drawBoxes(); };
+    layer.onpointerup = layer.onpointercancel = () => { if (drag && !drag.move && (boxes[sel].w < 0.015 || boxes[sel].h < 0.015)) { boxes.splice(sel, 1); sel = -1; } drag = null; draw(); };
+    const toggle = () => (V.paused ? V.play().catch(() => { }) : V.pause());
+    const onKey = (e) => { if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName) && e.target.type !== 'range') return; const k = e.key.toLowerCase();
+      const map = { ' ': toggle, k: toggle, arrowleft: () => { V.currentTime = Math.max(0, V.currentTime - 1); }, arrowright: () => { V.currentTime = Math.min(total(), V.currentTime + 1); }, delete: () => { if (sel >= 0) { boxes.splice(sel, 1); sel = -1; draw(); } } };
+      if (map[k]) { e.preventDefault(); e.stopPropagation(); map[k](); } };
+    const finish = (val) => { if (settled) return; settled = true; cancelAnimationFrame(raf); window.removeEventListener('resize', fit); d.removeEventListener('keydown', onKey); V.pause(); V.removeAttribute('src'); V.load(); d.classList.remove('studio'); if (d.open) d.close(); resolve(val); };
+    let lastOn = '';
+    const tick = () => { if (settled) return; const t = V.currentTime; $('#blTc', d).textContent = tf(t); $('#blPlay', d).textContent = V.paused ? '▶' : '❚❚'; if (!seeking && total()) $('#blSeek', d).value = Math.round(t / total() * 1000);
+      const now = boxes.map((b) => (on(b, t) ? 1 : 0)).join(''); if (now !== lastOn && !drag) { lastOn = now; drawBoxes(); } raf = requestAnimationFrame(tick); };
+    $('#blPlay', d).onclick = toggle; $('#blClear', d).onclick = () => { boxes = []; sel = -1; draw(); };
+    $('#blSeek', d).oninput = (e) => { seeking = true; V.currentTime = e.target.value / 1000 * total(); }; $('#blSeek', d).onchange = () => { seeking = false; };
+    whenDur(V).then(() => { if (settled) return; $('#blDur', d).textContent = tf(total()); fit(); draw(); });
+    V.addEventListener('error', () => { $('#blMsg', d).className = 'msg bad'; $('#blMsg', d).textContent = '영상을 불러오지 못했어요.'; });
+    window.addEventListener('resize', fit);
+    $('#blCancel', d).onclick = () => finish(null);
+    $('#blOk', d).onclick = () => finish(boxes.map((b) => ({ x: +b.x.toFixed(4), y: +b.y.toFixed(4), w: +b.w.toFixed(4), h: +b.h.toFixed(4), s: b.s, ...(b.e == null ? {} : { e: b.e }) })));
+    d.addEventListener('close', () => finish(null), { once: true }); d.addEventListener('keydown', onKey);
+    d.showModal(); fit(); draw(); tick();
   });
 }
 
@@ -179,7 +228,7 @@ async function watch(id, params) {
   let d; try { d = await api('api/videos/' + id); } catch (e) { $('#view').innerHTML = `<div class="empty"><b>${esc(e.message)}</b><a href="#/">처음으로</a></div>`; return; }
   const v = d.video, listId = params.get('list'); let pl = null;
   if (listId) try { pl = (await api('api/playlists/' + listId)).playlist; } catch { }
-  const quality = v.low && ls.get('quality', '720') === '360' ? '360' : '720', src = (q) => `media/${v.id}${q === '360' ? '_360' : ''}.mp4`;
+  const quality = v.low && ls.get('quality', '720') === '360' ? '360' : '720', src = (q) => `media/${v.id}${q === '360' ? '_360' : ''}.mp4?v=${v.thumbVer || 0}`;   // 편집하면 주소가 바뀌어 옛 영상이 남지 않는다
   const player = v.status === 'ready' ? `<video id="player" controls autoplay playsinline src="${src(quality)}" ${v.thumb ? `poster="${thumbUrl(v)}"` : ''}>${v.subs ? `<track kind="subtitles" srclang="ko" label="한국어" src="subs/${v.id}.vtt">` : ''}</video>
     <div id="strip" class="strip" title="파란 부분이 핵심 구간이에요" hidden></div>
     <div class="pbar"><button class="small" id="coreBtn" title="핵심 구간만 이어서 보기 (H)" hidden></button><button class="small" id="back10" title="10초 뒤로 (J)">⏪ 10초</button><button class="small" id="fwd10" title="10초 앞으로 (L)">10초 ⏩</button>
@@ -193,7 +242,7 @@ async function watch(id, params) {
     <h1>${esc(v.title)}</h1><div class="meta">${esc(v.category)} · 조회수 <span id="views">${v.views}</span>회 · ${ago(v.created)}${v.bytes ? ' · ' + mb(v.bytes) : ''}${v.visibility === 'unlisted' ? ' · 링크로만 공개' : ''}${v.hidden ? ' · 관리자가 숨김' : ''}</div>
     <div class="actions"><button id="like" class="${liked === 1 ? 'on' : ''}">👍 <b id="likes">${v.likes}</b></button><button id="dislike" class="${liked === -1 ? 'on' : ''}">👎 <b id="dislikes">${v.dislikes}</b></button>
       <button id="share">↗ 공유</button><button id="later" class="${later ? 'on' : ''}">⏰ ${later ? '담김' : '나중에 보기'}</button><button id="addPl">📚 재생 목록에 담기</button><span class="sp"></span>
-      <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">✂ 편집</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
+      <button id="edit" class="ghost">고치기</button><button id="thumbBtn" class="ghost">썸네일</button><button id="trimBtn" class="ghost">✂ 편집</button><button id="blurBtn" class="ghost">▦ 가리기</button><button id="audioBtn" class="ghost">🔊 소리 정리</button><button id="report" class="ghost">신고</button><button id="del" class="ghost">지우기</button></div>
     ${v.note && v.status === 'ready' ? `<p class="msg bad">${esc(v.note)}</p>` : ''}
     ${v.desc || v.tags.length ? `<div class="desc">${esc(v.desc)}${v.tags.length ? (v.desc ? '\n' : '') + v.tags.map((t) => `<a class="tag" href="#/tag/${encodeURIComponent(t)}">#${esc(t)}</a>`).join('') : ''}</div>` : ''}
     <div class="comments"><h2>댓글 ${d.comments.length}개</h2>
@@ -318,6 +367,13 @@ async function watch(id, params) {
     const keep = await rangeEditor({ src: src('720'), title: v.title, points: ins.points }); if (!keep) return;
     if (!confirm(`고른 ${keep.length}개 구간만 남기고 나머지는 지워요. 되돌릴 수 없어요. 계속할까요?`)) return;
     try { await api(`api/videos/${id}/cut`, send('POST', { keep })); const pos = ls.get('pos', {}); delete pos[v.id]; ls.set('pos', pos); route(); } catch (e) { alert(e.message); } };
+  $('#blurBtn').onclick = async () => { if (!P) return toast('영상 변환이 끝난 뒤에 가릴 수 있어요'); P.pause();
+    const boxes = await blurEditor({ src: src('720'), title: v.title }); if (!boxes) return;
+    if (!confirm(`고른 ${boxes.length}곳을 모자이크로 가려요. 되돌릴 수 없어요. 계속할까요?`)) return;
+    try { await api(`api/videos/${id}/blur`, send('POST', { boxes })); route(); } catch (e) { alert(e.message); } };
+  $('#audioBtn').onclick = async () => { if (!P) return toast('영상 변환이 끝난 뒤에 할 수 있어요');
+    if (!confirm('잡음을 줄이고 소리 크기를 듣기 좋게 맞춰요. 되돌릴 수 없어요. 계속할까요?')) return;
+    try { await api(`api/videos/${id}/audio`, send('POST')); route(); } catch (e) { alert(e.message); } };
   $('#report').onclick = async () => { const r = prompt('신고 이유를 적어 주세요 (관리 화면에 전달돼요)'); if (!r) return; try { await api(`api/videos/${id}/report`, send('POST', { reason: r })); toast('신고했어요'); } catch (e) { alert(e.message); } };
   $('#del').onclick = async () => { if (!confirm(`'${v.title}' 영상을 지울까요? 되돌릴 수 없어요.`)) return; await api('api/videos/' + id, { method: 'DELETE' }); refreshMeta(); location.hash = '#/'; };
   $('#cform').onsubmit = async (e) => { e.preventDefault(); const text = $('#ctext').value.trim(); if (!text) return; const body = { text }; if ($('#cat').checked && P) body.at = Math.floor(P.currentTime);
@@ -416,6 +472,25 @@ async function uploadOne(i, common) {
     }
   }
 }
+/* ---------- 화면 녹화해서 바로 올리기 (설치 없이 브라우저만으로. 내 화면 + 마이크) ---------- */
+async function startRec() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || !window.MediaRecorder) return alert('이 주소에서는 화면 녹화를 쓸 수 없어요. 브라우저가 https 주소(또는 localhost)에서만 화면 녹화를 허용해요.');
+  let screen; try { screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: true }); } catch { return; }
+  let mic = null; try { mic = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { }
+  const tracks = [...screen.getVideoTracks()], auds = [screen, mic].filter((x) => x && x.getAudioTracks().length); let ctx = null;
+  if (auds.length) { ctx = new AudioContext(); const dest = ctx.createMediaStreamDestination(); auds.forEach((x) => ctx.createMediaStreamSource(x).connect(dest)); tracks.push(...dest.stream.getAudioTracks()); }
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
+  const mr = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 2500000 }), chunks = [], t0 = Date.now();
+  const bar = document.createElement('div'); bar.id = 'recBar'; bar.innerHTML = `<span class="dot"></span><b>녹화 중</b><span id="recT">0:00</span><span class="meta">${mic ? '🎙 마이크 켜짐' : '🎙 마이크 없음'}</span><button id="recStop" class="primary">■ 녹화 끝내기</button>`; document.body.appendChild(bar);
+  const timer = setInterval(() => { $('#recT').textContent = dur((Date.now() - t0) / 1000); }, 500), stop = () => { if (mr.state !== 'inactive') mr.stop(); };
+  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mr.onstop = () => { clearInterval(timer); bar.remove(); [screen, mic].forEach((x) => x && x.getTracks().forEach((t) => t.stop())); if (ctx) ctx.close();
+    const n = new Date(), p2 = (x) => String(x).padStart(2, '0'), name = `화면 녹화 ${n.getFullYear()}-${p2(n.getMonth() + 1)}-${p2(n.getDate())} ${p2(n.getHours())}시 ${p2(n.getMinutes())}분`;
+    addFiles([new File(chunks, name + '.webm', { type: 'video/webm' })]); if (!dlg.open) dlg.showModal(); toast('녹화를 올릴 목록에 넣었어요. ✂ 편집으로 다듬을 수 있어요'); };
+  screen.getVideoTracks()[0].addEventListener('ended', stop); $('#recStop').onclick = stop;
+  mr.start(1000); if (dlg.open) dlg.close();
+}
+$('#recBtn').onclick = startRec;
 $('#uploadBtn').onclick = () => { if (!uploading) { files = files.filter((f) => f.cls !== 'ok'); renderUp(); } $('#upMsg').textContent = ''; $('#upMsg').className = 'msg'; dlg.showModal(); };
 $('#upCancel').onclick = () => { if (uploading) { cancelled = true; return; } dlg.close(); };
 $('#file').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
@@ -426,7 +501,7 @@ $('#uploadForm').onsubmit = async (e) => {
   const todo = files.map((f, i) => i).filter((i) => files[i].cls !== 'ok');
   if (!todo.length) { msg.textContent = '영상 파일을 골라 주세요.'; msg.className = 'msg bad'; return; }
   uploading = true; cancelled = false; $('#upGo').disabled = true; $('#upCancel').textContent = '취소'; renderUp();
-  const common = { cat: $('#upCat').value, desc: $('#upDesc').value, tags: $('#upTags').value, visibility: $('#upVis').value }; let okN = 0, badN = 0;
+  const common = { clean: $('#upClean').checked, cat: $('#upCat').value, desc: $('#upDesc').value, tags: $('#upTags').value, visibility: $('#upVis').value }; let okN = 0, badN = 0;
   for (const i of todo) { try { setRow(i, '올리는 중 0%', 0); lastUploaded = await uploadOne(i, common); setRow(i, '올림 ✓', 100, 'ok'); okN++; } catch (er) { setRow(i, er.message, files[i].pct || 0, 'bad'); badN++; if (cancelled) break; } }
   uploading = false; $('#upGo').disabled = false; $('#upCancel').textContent = '닫기'; renderUp(); refreshMeta();
   msg.textContent = `${okN}개 올림${badN ? `, ${badN}개 실패` : ''}`; msg.className = badN ? 'msg bad' : 'msg';

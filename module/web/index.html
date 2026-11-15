@@ -28,6 +28,7 @@
   <form id="uploadForm" method="dialog">
     <h2>영상 올리기</h2>
     <label class="drop" id="drop"><input id="file" type="file" accept="video/*,.mkv,.avi,.mov,.3gp" multiple hidden><b>영상 파일 고르기 (여러 개 가능)</b><span>또는 여기에 끌어다 놓으세요</span></label>
+    <div class="row recrow"><button type="button" id="recBtn">⏺ 화면 녹화해서 올리기</button><span class="sp"></span><label class="pick"><input type="checkbox" id="upClean"> 소리 정리 (잡음 줄이고 크기 맞추기)</label></div>
     <div id="upList"></div>
     <label>분류 <select id="upCat"></select></label>
     <label>설명 <textarea id="upDesc" rows="2" maxlength="2000" placeholder="영상 설명"></textarea></label>
